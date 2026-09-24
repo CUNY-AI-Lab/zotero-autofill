@@ -14,3 +14,9 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # 5.1.1+ removed ztoolkit.Menu and Zotero 7 support; the plugin still
+      # supports Zotero 7 (strict_min_version 6.999). Lift this when moving the
+      # menus to Zotero.MenuManager and dropping Zotero 7.
+      - dependency-name: "zotero-plugin-toolkit"
+        versions: [">=5.1.1"]
