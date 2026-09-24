@@ -1,5 +1,6 @@
 import { assert } from "chai";
 import {
+  privateHistoryForItem,
   proposedChanges,
   saveReviewedChanges,
 } from "../src/modules/enrichmentReview";
@@ -23,9 +24,13 @@ describe("reviewed metadata in Zotero", function () {
       assert.equal(item.getField("publisher"), "Fixture Press");
       assert.include(String(item.getField("extra")), "LCCN: 123456");
       assert.isFalse(Boolean(item.getField("callNumber")));
-      assert.lengthOf(item.getNotes(), 1);
-      const note = await Zotero.Items.getAsync(item.getNotes()[0]);
-      assert.include(note.getNote(), "CUNY-METADATA-HISTORY:");
+      assert.lengthOf(item.getNotes(), 0);
+      const history = privateHistoryForItem(item);
+      assert.lengthOf(history, 1);
+      assert.equal(
+        history[0].record.source,
+        "https://openlibrary.org/books/OL1M.json",
+      );
       item.setField("publisher", "User correction");
       await item.saveTx();
       let rejected = false;

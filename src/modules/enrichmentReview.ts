@@ -194,7 +194,7 @@ function writePrivateHistory(store: StoredHistory): void {
   Zotero.Prefs.set(HISTORY_PREF, JSON.stringify(store), true);
 }
 
-function privateHistoryForItem(
+export function privateHistoryForItem(
   item: Zotero.Item,
 ): Array<{ id: number; record: HistoryRecord }> {
   return readPrivateHistory().items[historyItemKey(item)] || [];
