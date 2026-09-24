@@ -919,7 +919,7 @@ export async function enrichItems(
 
 export class EnrichmentFactory {
   static async enrichSelectedItems(): Promise<void> {
-    const items = Zotero.getActiveZoteroPane().getSelectedItems();
+    const items = Zotero.getActiveZoteroPane()?.getSelectedItems() ?? [];
     if (!items.length) {
       Zotero.alert(
         Zotero.getMainWindow(),

@@ -140,6 +140,7 @@ export function openImportDialog(): void {
     return;
   }
   const pane = Zotero.getActiveZoteroPane();
+  if (!pane) return;
   const libraryID =
     pane.getSelectedLibraryID() || Zotero.Libraries.userLibraryID;
   const collection = pane.getSelectedCollection();
