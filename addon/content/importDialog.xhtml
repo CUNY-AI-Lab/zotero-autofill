@@ -8,7 +8,7 @@ href="chrome://zotero/skin/zotero.css" type="text/css"?>
   title="Zotero Metadata Assistant — CUNY AI Lab"
   width="780"
   height="760"
-  onload="window.arguments[0].onLoad(window);"
+  onload="window.arguments[0].onLoad(window)"
 >
   <vbox flex="1" style="padding: 16px; overflow: auto">
     <html:h1 style="font-size: 20px; margin: 0"
@@ -53,15 +53,15 @@ href="chrome://zotero/skin/zotero.css" type="text/css"?>
       <button
         id="parse-button"
         label="Parse with AI"
-        oncommand="window.dialogArgs.onParse();"
+        oncommand="window.dialogArgs.onParse()"
       />
       <button
         id="import-button"
         label="Import selected"
         disabled="true"
-        oncommand="window.dialogArgs.onImport();"
+        oncommand="window.dialogArgs.onImport()"
       />
-      <button label="Close" oncommand="window.close();" />
+      <button label="Close" oncommand="window.close()" />
     </hbox>
   </vbox>
 </window>

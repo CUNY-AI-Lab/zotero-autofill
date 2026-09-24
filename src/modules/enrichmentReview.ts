@@ -115,9 +115,9 @@ function isExpandedValue(current: string, proposed: string): boolean {
   const normalizedProposed = normalizeForMatch(proposed);
   return Boolean(
     normalizedCurrent &&
-      normalizedProposed &&
-      normalizedCurrent !== normalizedProposed &&
-      normalizedProposed.includes(normalizedCurrent),
+    normalizedProposed &&
+    normalizedCurrent !== normalizedProposed &&
+    normalizedProposed.includes(normalizedCurrent),
   );
 }
 
@@ -609,7 +609,7 @@ export function pendingUndo(
 
 export async function undoSelectedEnrichment(): Promise<void> {
   const rows: ReviewRow[] = [];
-  for (const item of Zotero.getActiveZoteroPane().getSelectedItems()) {
+  for (const item of Zotero.getActiveZoteroPane()?.getSelectedItems() ?? []) {
     if (!item.isRegularItem()) continue;
     const records: Array<{ id: number; record: unknown }> = [
       ...privateHistoryForItem(item),
