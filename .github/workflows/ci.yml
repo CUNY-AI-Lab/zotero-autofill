@@ -17,9 +17,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 24.22.1
           cache: npm
       - name: Install deps
         run: npm ci
@@ -34,9 +34,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 24.22.1
           cache: npm
       - name: Install deps
         run: npm ci
@@ -54,9 +54,9 @@ jobs:
       - build
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 24.22.1
           cache: npm
       - run: npm ci
       - run: npm run test:unit
