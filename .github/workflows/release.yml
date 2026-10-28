@@ -35,16 +35,19 @@ jobs:
         run: |
           npm run build
 
-      # Public evidence that the released XPI was built from this tag's source.
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: .scaffold/build/*.xpi
-
       - name: Release to GitHub
         run: |
           npm run release
           sleep 1s
+
+      # The release step rebuilds the XPI, so attest the asset as published.
+      - name: Download published XPI
+        run: gh release download "$GITHUB_REF_NAME" --pattern '*.xpi' --dir published
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: published/*.xpi
 
       - name: Notify release
         uses: apexskier/github-release-commenter@v1
