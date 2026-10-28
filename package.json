@@ -1,7 +1,7 @@
 {
   "name": "zotero-metadata-assistant",
   "type": "module",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "A CUNY AI Lab tool for reviewing scholarly metadata and importing bibliographies",
   "config": {
     "addonName": "Zotero Metadata Assistant",
