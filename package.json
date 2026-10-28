@@ -22,7 +22,8 @@
   "license": "GPL-3.0-or-later",
   "scripts": {
     "start": "zotero-plugin serve",
-    "build": "zotero-plugin build && tsc --noEmit",
+    "build": "zotero-plugin build && tsc --noEmit && npm run check:bundle",
+    "check:bundle": "! grep -rlE 'zotero://(plugin|ztoolkit-debug)' .scaffold/build/addon",
     "lint:check": "prettier --check . && eslint .",
     "lint:fix": "prettier --write . && eslint . --fix",
     "release": "zotero-plugin release",
