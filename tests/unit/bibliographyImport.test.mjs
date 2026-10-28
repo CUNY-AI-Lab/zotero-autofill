@@ -53,6 +53,23 @@ const windows = [];
 const items = [];
 let failSecond = true;
 let requestGate;
+const research = { id: 7, libraryID: 42, name: "Research" };
+// Zotero 7–9 pane: single-selection getters only.
+let pane = {
+  getSelectedLibraryID: () => 42,
+  getSelectedCollection: () => research,
+};
+// Zotero 10 pane with several rows selected: singular getters throw.
+const zotero10Pane = (libraryIDs, collections) => ({
+  getSelectedLibraryID() {
+    throw new Error("getSelectedLibraryID() was removed");
+  },
+  getSelectedCollection() {
+    throw new Error("getSelectedCollection() was removed");
+  },
+  getSelectedLibraryIDs: () => libraryIDs,
+  getSelectedCollections: () => collections,
+});
 class Item {
   fields = {};
   creators = [];
@@ -94,10 +111,7 @@ globalThis.Zotero = {
     },
   },
   getActiveZoteroPane() {
-    return {
-      getSelectedLibraryID: () => 42,
-      getSelectedCollection: () => ({ id: 7, libraryID: 42, name: "Research" }),
-    };
+    return pane;
   },
   Libraries: {
     userLibraryID: 1,
@@ -200,4 +214,33 @@ test("independent windows cannot import another dialog state; parsing blocks imp
     win.document.getElementById("results-text").textContent,
     /Review all 2/,
   );
+});
+test("Zotero 10 selection: one collection is the import destination", async () => {
+  pane = zotero10Pane([42], [research]);
+  openImportDialog();
+  const { win, args } = windows.at(-1);
+  const count = items.length;
+  win.document.getElementById("bibliography-input").value = "first\n\nsecond";
+  await args.onParse();
+  await args.onImport();
+  const saved = items.slice(count).filter((item) => item.type === "book");
+  assert.equal(saved.length, 2);
+  assert.ok(saved.every((item) => item.libraryID === 42));
+  assert.ok(saved.every((item) => item.collectionID === 7));
+});
+test("Zotero 10 selection: several collections import to the library root", async () => {
+  pane = zotero10Pane(
+    [42],
+    [research, { id: 8, libraryID: 42, name: "Teaching" }],
+  );
+  openImportDialog();
+  const { win, args } = windows.at(-1);
+  const count = items.length;
+  win.document.getElementById("bibliography-input").value = "first\n\nsecond";
+  await args.onParse();
+  await args.onImport();
+  const saved = items.slice(count).filter((item) => item.type === "book");
+  assert.equal(saved.length, 2);
+  assert.ok(saved.every((item) => item.libraryID === 42));
+  assert.ok(saved.every((item) => item.collectionID === undefined));
 });

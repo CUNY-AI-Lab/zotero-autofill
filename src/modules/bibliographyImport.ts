@@ -129,6 +129,26 @@ function itemKeys(item: Zotero.Item): string[] {
   });
 }
 
+export function getImportDestination(pane: _ZoteroTypes.ZoteroPane): {
+  libraryID: number;
+  collection?: Zotero.Collection;
+} {
+  // Zotero 10 allows several selected rows, and its singular getters throw when
+  // more than one is selected; only one selected collection is unambiguous.
+  const collections = pane.getSelectedCollections
+    ? pane.getSelectedCollections()
+    : [pane.getSelectedCollection()];
+  const libraryID =
+    (pane.getSelectedLibraryIDs
+      ? pane.getSelectedLibraryIDs()[0]
+      : pane.getSelectedLibraryID()) || Zotero.Libraries.userLibraryID;
+  const collection = collections.length === 1 ? collections[0] : undefined;
+  return {
+    libraryID,
+    collection: collection?.libraryID === libraryID ? collection : undefined,
+  };
+}
+
 export function openImportDialog(): void {
   if (!isLLMAvailable()) {
     new ztoolkit.ProgressWindow(addon.data.config.addonName)
@@ -141,11 +161,8 @@ export function openImportDialog(): void {
   }
   const pane = Zotero.getActiveZoteroPane();
   if (!pane) return;
-  const libraryID =
-    pane.getSelectedLibraryID() || Zotero.Libraries.userLibraryID;
-  const collection = pane.getSelectedCollection();
-  const collectionID =
-    collection?.libraryID === libraryID ? collection.id : undefined;
+  const { libraryID, collection } = getImportDestination(pane);
+  const collectionID = collection?.id;
   const library = Zotero.Libraries.get(libraryID);
   if (!library) return;
   // Each window owns its state; destination is captured and cannot drift while reviewing.
