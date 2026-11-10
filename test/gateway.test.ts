@@ -58,6 +58,24 @@ describe("CAIL Gateway client in real Zotero", function () {
     assert.lengthOf(await stubLog(), 1);
   });
 
+  it("makes exactly one request for a 429 or 503 with Retry-After but no x-should-retry", async function () {
+    // Zotero 7-10's own HTTP layer would sleep Retry-After and resend
+    // (unbounded) unless the request opts out with noRetryOnThrottle.
+    for (const status of [429, 503]) {
+      await script([
+        {
+          status,
+          headers: { "Retry-After": "1" },
+          body: { error: { code: "quota_exceeded", message: "Over quota" } },
+        },
+        ok,
+      ]);
+      const result = await api().callOpenRouter(msgs);
+      assert.isFalse(result.success, String(status));
+      assert.lengthOf(await stubLog(), 1, String(status));
+    }
+  });
+
   it("retries once, after Retry-After, when x-should-retry is true", async function () {
     await script([
       {

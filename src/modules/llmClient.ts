@@ -16,7 +16,12 @@ import {
   refreshCatalog,
 } from "./catalog";
 
-export { getCatalogModels, parseCatalog, resetCatalogCache } from "./catalog";
+export {
+  getCatalogModels,
+  getMenuModels,
+  parseCatalog,
+  resetCatalogCache,
+} from "./catalog";
 export { resetKeyStoreState } from "../utils/keystore";
 import {
   getChatCompletionsUrl,
@@ -370,14 +375,18 @@ export async function callOpenRouter(
         body: JSON.stringify(payload),
         timeout,
         responseType: "json",
-        // Zotero.HTTP.request retries 5xx on its own by default; the Gateway
-        // decides retries itself.
-        ...(isCail ? { errorDelayMax: 0 } : {}),
+        // Zotero.HTTP.request otherwise retries on its own: 5xx with backoff
+        // (errorDelayMax) and, in Zotero 7-10, 429/503 after any Retry-After
+        // header even when errorDelayMax is 0 (noRetryOnThrottle). The retry
+        // policy above is the only one.
+        errorDelayMax: 0,
+        noRetryOnThrottle: true,
         cancellerReceiver: (fn: () => void) => {
           cancel = fn;
-          signal?.addEventListener("abort", onAbort, { once: true });
+          if (signal?.aborted) fn();
+          else signal?.addEventListener("abort", onAbort, { once: true });
         },
-      });
+      } as any);
 
       const data = response.response as any;
 

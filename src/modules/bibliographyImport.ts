@@ -1,6 +1,11 @@
 /** Reviewed, destination-aware bibliography imports for the CUNY AI Lab. */
 import { isLLMAvailable, parseBibliographyWithLLM } from "./llmClient";
 import { getMissingProviderKeyMessage } from "./provider";
+import {
+  KEYSTORE_UNAVAILABLE_MESSAGE,
+  getKeyStoreProblem,
+  migrateKeysFromPrefs,
+} from "../utils/keystore";
 import { enrichItems } from "./enrichment";
 import {
   CSLItem,
@@ -153,7 +158,9 @@ export function openImportDialog(): void {
   if (!isLLMAvailable()) {
     new ztoolkit.ProgressWindow(addon.data.config.addonName)
       .createLine({
-        text: getMissingProviderKeyMessage(),
+        text: getKeyStoreProblem()
+          ? `${getMissingProviderKeyMessage()} ${KEYSTORE_UNAVAILABLE_MESSAGE}`
+          : getMissingProviderKeyMessage(),
         type: "fail",
       })
       .show();
@@ -518,7 +525,10 @@ export function openImportDialog(): void {
 }
 
 export class BibliographyImportFactory {
-  static openDialog(): void {
+  static async openDialog(): Promise<void> {
+    // The key check below is synchronous; make sure the login manager has
+    // been read first (startup does not wait for it).
+    await migrateKeysFromPrefs();
     openImportDialog();
   }
 }

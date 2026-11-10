@@ -113,5 +113,14 @@ test("OpenRouter keeps retrying 429, 5xx and timeouts up to 3 attempts", async (
   assert.equal(calls.length, 3);
   await run("openrouter", [{ status: 400 }]);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].errorDelayMax, undefined);
+});
+
+test("Zotero.HTTP never retries on its own: no 5xx backoff, no Retry-After sleep", async () => {
+  // errorDelayMax: 0 alone still lets Zotero 7-10 sleep on a 429/503
+  // Retry-After and resend; noRetryOnThrottle stops that.
+  for (const p of ["cail", "openrouter"]) {
+    await run(p, [{ status: 400 }]);
+    assert.equal(calls[0].errorDelayMax, 0, p);
+    assert.equal(calls[0].noRetryOnThrottle, true, p);
+  }
 });

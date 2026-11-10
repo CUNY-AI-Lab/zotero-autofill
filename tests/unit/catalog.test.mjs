@@ -165,3 +165,24 @@ test("OpenRouter never fetches the CAIL catalog", async () => {
   assert.equal(calls.filter((c) => c.method === "GET").length, 0);
   assert.equal(sentModel(), "deepseek/deepseek-v4.1-flash");
 });
+
+test("the settings menu offers recommended models, the built-in DeepSeek pair and the saved one", async () => {
+  reset();
+  await llm.ensureCatalogAndModel();
+  const ids = (saved) => llm.getMenuModels(saved).map((m) => m.id);
+  const all = llm.getCatalogModels();
+  for (const id of ids()) {
+    const m = all.find((x) => x.id === id);
+    assert.ok(
+      m.recommended || id.startsWith("deepseek-v4"),
+      `${id} is recommended or built in`,
+    );
+  }
+  const other = all.find(
+    (m) => !m.recommended && !m.id.startsWith("deepseek-v4"),
+  );
+  if (other) {
+    assert.ok(!ids().includes(other.id));
+    assert.ok(ids(other.id).includes(other.id), "a saved model stays listed");
+  }
+});

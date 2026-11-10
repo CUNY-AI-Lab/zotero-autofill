@@ -100,6 +100,19 @@ export function getCatalogModels(): CatalogModel[] {
   return loaded()?.models ?? FALLBACK_CAIL_MODELS;
 }
 
+/**
+ * Models for the settings menu: the Gateway's recommended text models, the
+ * two DeepSeek models the plugin has always offered, and the saved model.
+ * The full catalog also lists classifiers, tiny LoRA demos and audio models
+ * that cannot parse a bibliography, so they are left out unless saved.
+ */
+export function getMenuModels(saved?: string): CatalogModel[] {
+  const builtIn = new Set(FALLBACK_CAIL_MODELS.map((m) => m.id));
+  return getCatalogModels().filter(
+    (m) => m.recommended || builtIn.has(m.id) || m.id === saved,
+  );
+}
+
 export function hasLiveCatalog(): boolean {
   return Boolean(loaded());
 }
@@ -120,8 +133,9 @@ async function fetchCatalog(): Promise<void> {
     timeout: CATALOG_TIMEOUT_MS,
     responseType: "json",
     errorDelayMax: 0,
+    noRetryOnThrottle: true,
     headers: { Accept: "application/json" },
-  });
+  } as any);
   const models = parseCatalog(response.response);
   if (!models.length) throw new Error("Catalog contained no text models");
   memory = { fetchedAt: Date.now(), models };

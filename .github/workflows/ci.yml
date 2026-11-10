@@ -81,5 +81,7 @@ jobs:
           esac
           tar -xf zotero.archive
           test -x Zotero_linux-x86_64/zotero
+          # Record which build this job really tested.
+          grep -hE '^(Version|Milestone)=' Zotero_linux-x86_64/application.ini Zotero_linux-x86_64/platform.ini || true
           echo "ZOTERO_PLUGIN_ZOTERO_BIN_PATH=$PWD/Zotero_linux-x86_64/zotero" >> "$GITHUB_ENV"
       - run: npm run test
