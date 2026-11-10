@@ -62,6 +62,21 @@ let lastAttempt = 0;
 let problem: KeyStoreError | undefined;
 let noticeShown = false;
 const RETRY_AFTER_MS = 60 * 1000;
+/** A hung login manager (e.g. an unanswered master-password prompt) must not hang callers. */
+export const KEYSTORE_TIMEOUT_MS = 20 * 1000;
+
+function withTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("Login manager did not respond")),
+        KEYSTORE_TIMEOUT_MS,
+      );
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 /** Reason the store could not be used, if the last attempt failed. */
 export function getKeyStoreProblem(): KeyStoreError | undefined {
@@ -178,14 +193,14 @@ export async function migrateKeysFromPrefs(): Promise<void> {
   lastAttempt = Date.now();
   try {
     for (const name of KEY_NAMES) {
-      const stored = await readFromStore(name);
+      const stored = await withTimeout(readFromStore(name));
       const legacy = legacyPref(name);
       if (stored) {
         // Don't clobber a key the user just typed this session.
         if (!cache.has(name)) cache.set(name, stored);
         if (legacy) clearLegacyPref(name);
       } else if (legacy) {
-        await writeToStore(name, legacy);
+        await withTimeout(writeToStore(name, legacy));
         if (!cache.has(name)) cache.set(name, legacy);
         clearLegacyPref(name);
       }
@@ -221,7 +236,7 @@ export async function setApiKey(
   if (trimmed) cache.set(name, trimmed);
   else cache.delete(name);
   try {
-    await writeToStore(name, trimmed);
+    await withTimeout(writeToStore(name, trimmed));
     clearLegacyPref(name);
     problem = undefined;
     return { persisted: true };

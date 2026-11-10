@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { loadModule } from "./helpers.mjs";
 
@@ -144,4 +144,24 @@ test("a key entered while the store is unusable lasts the session and never reac
   await keystore.setApiKey("cailApiKey", "sk-cail-typed-2");
   assert.equal(notices, 1, "notice shown once per session");
   assert.ok(!JSON.stringify(result.error.cause).includes("sk-cail"));
+});
+
+test("a login manager that never answers cannot hang callers", async () => {
+  reset({ cailApiKey: "sk-cail-old" });
+  globalThis.Services.logins = {
+    ...modern,
+    searchLoginsAsync: () => new Promise(() => {}),
+  };
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const done = keystore.migrateKeysFromPrefs();
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    mock.timers.tick(keystore.KEYSTORE_TIMEOUT_MS + 1);
+    await done;
+  } finally {
+    mock.timers.reset();
+  }
+  assert.equal(keystore.getApiKey("cailApiKey"), "sk-cail-old");
+  assert.equal(prefs.cailApiKey, "sk-cail-old");
+  assert.match(keystore.getKeyStoreProblem().cause.message, /did not respond/);
 });

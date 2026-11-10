@@ -65,6 +65,8 @@ export interface EnrichmentStats {
   notFound: number;
   preIsbn: number;
   skipped: number;
+  /** Items whose earlier lookup was still running. */
+  alreadyRunning: number;
   proposals: EnrichmentProposal[];
   errors: string[];
 }
@@ -190,7 +192,12 @@ async function resolveOpenLibraryAuthors(
       const response = await Zotero.HTTP.request(
         "GET",
         `https://openlibrary.org${key}.json`,
-        { timeout: 10000, responseType: "json" },
+        {
+          timeout: 10000,
+          // Zotero.HTTP would otherwise retry 5xx for up to an hour, leaving the lookup pending.
+          errorDelayMax: 0,
+          responseType: "json",
+        },
       );
       const name = String((response.response as any)?.name || "").trim();
       if (name) resolved.push({ name });
@@ -212,6 +219,8 @@ async function fetchOpenLibraryEdition(
   try {
     const response = await Zotero.HTTP.request("GET", url, {
       timeout: 10000,
+      // Zotero.HTTP would otherwise retry 5xx for up to an hour, leaving the lookup pending.
+      errorDelayMax: 0,
       responseType: "json",
     });
 
@@ -325,6 +334,8 @@ export async function searchOpenLibrary(
   try {
     const response = await Zotero.HTTP.request("GET", url, {
       timeout: 10000,
+      // Zotero.HTTP would otherwise retry 5xx for up to an hour, leaving the lookup pending.
+      errorDelayMax: 0,
       responseType: "json",
     });
 
@@ -345,6 +356,8 @@ export async function searchOpenLibrary(
           await sleep(1100);
           const detail = await Zotero.HTTP.request("GET", editionURL, {
             timeout: 10000,
+            // Zotero.HTTP would otherwise retry 5xx for up to an hour, leaving the lookup pending.
+            errorDelayMax: 0,
             responseType: "json",
           });
           const data = detail.response as any;
@@ -468,6 +481,8 @@ export async function searchGoogleBooks(
   try {
     const response = await Zotero.HTTP.request("GET", url, {
       timeout: 10000,
+      // Zotero.HTTP would otherwise retry 5xx for up to an hour, leaving the lookup pending.
+      errorDelayMax: 0,
       responseType: "json",
     });
 
@@ -581,6 +596,8 @@ async function fetchCrossrefWork(
           "Zotero Metadata Assistant/1.0 (https://github.com/CUNY-AI-Lab/zotero-autofill)",
       },
       timeout: 10000,
+      // Zotero.HTTP would otherwise retry 5xx for up to an hour, leaving the lookup pending.
+      errorDelayMax: 0,
       responseType: "json",
     });
     const result = parseCrossrefWork((response.response as any)?.message);
@@ -620,6 +637,8 @@ async function fetchSemanticScholarTitle(
             "Zotero Metadata Assistant/1.0 (https://github.com/CUNY-AI-Lab/zotero-autofill)",
         },
         timeout: 10000,
+        // Zotero.HTTP would otherwise retry 5xx for up to an hour, leaving the lookup pending.
+        errorDelayMax: 0,
         responseType: "json",
       });
       const title = (response.response as any)?.title;
@@ -642,6 +661,8 @@ async function fetchSemanticScholarTitle(
           "Zotero Metadata Assistant/1.0 (https://github.com/CUNY-AI-Lab/zotero-autofill)",
       },
       timeout: 10000,
+      // Zotero.HTTP would otherwise retry 5xx for up to an hour, leaving the lookup pending.
+      errorDelayMax: 0,
       responseType: "json",
     });
     const normalizedDOI = doi.trim().toLowerCase();
@@ -683,6 +704,8 @@ export async function searchCrossref(
           "Zotero Metadata Assistant/1.0 (https://github.com/CUNY-AI-Lab/zotero-autofill)",
       },
       timeout: 10000,
+      // Zotero.HTTP would otherwise retry 5xx for up to an hour, leaving the lookup pending.
+      errorDelayMax: 0,
       responseType: "json",
     });
     const items = (response.response as any)?.message?.items;
@@ -870,6 +893,27 @@ export async function enrichItem(item: Zotero.Item): Promise<boolean> {
   return true;
 }
 
+/**
+ * No lookup may stay "pending" longer than this. Individual calls have their
+ * own timeouts (10 s lookups, 30 s catalog and model calls); this bounds the
+ * sum, including anything that has no timeout of its own.
+ */
+export const LOOKUP_DEADLINE_MS = 3 * 60 * 1000;
+
+function withDeadline<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 const pending = new Set<number>();
 export async function enrichItems(
   items: Zotero.Item[],
@@ -881,12 +925,17 @@ export async function enrichItems(
     notFound: 0,
     preIsbn: 0,
     skipped: 0,
+    alreadyRunning: 0,
     proposals: [],
     errors: [],
   };
   for (const [index, item] of items.entries()) {
-    if (!isEnrichableItem(item) || pending.has(item.id)) {
+    if (!isEnrichableItem(item)) {
       stats.skipped++;
+      continue;
+    }
+    if (pending.has(item.id)) {
+      stats.alreadyRunning++;
       continue;
     }
     pending.add(item.id);
@@ -896,7 +945,11 @@ export async function enrichItems(
         items.length,
         String(item.getField("title")),
       );
-      const result = await lookupItem(item);
+      const result = await withDeadline(
+        lookupItem(item),
+        LOOKUP_DEADLINE_MS,
+        `Lookup timed out after ${Math.round(LOOKUP_DEADLINE_MS / 1000)} s`,
+      );
       if (result) {
         stats.proposals.push({ item, result });
         stats.found++;
@@ -917,6 +970,18 @@ export async function enrichItems(
   return stats;
 }
 
+export function noSuggestionMessage(stats: EnrichmentStats): string {
+  if (stats.alreadyRunning && !stats.notFound && !stats.skipped)
+    return stats.alreadyRunning === 1
+      ? "A lookup for this item is already running."
+      : `Lookups for these ${stats.alreadyRunning} items are already running.`;
+  const parts = [`${stats.notFound} unresolved`];
+  if (stats.skipped) parts.push(`${stats.skipped} not eligible`);
+  if (stats.alreadyRunning)
+    parts.push(`${stats.alreadyRunning} already running`);
+  return `No matching metadata found (${parts.join("; ")}).`;
+}
+
 export class EnrichmentFactory {
   static async enrichSelectedItems(): Promise<void> {
     const items = Zotero.getActiveZoteroPane()?.getSelectedItems() ?? [];
@@ -929,11 +994,19 @@ export class EnrichmentFactory {
       return;
     }
     const popup = new ztoolkit.ProgressWindow(addon.data.config.addonName)
-      .createLine({ text: "Looking up metadata…" })
-      .show();
+      .createLine({ text: "Looking up metadata…", progress: 0 })
+      .show(-1); // stay open until the lookup finishes (default auto-closes after 5 s)
     let popupClosed = false;
     try {
-      const stats = await enrichItems(items, undefined, { openReview: false });
+      const stats = await enrichItems(
+        items,
+        (current, total, title) =>
+          popup.changeLine({
+            text: `Looking up ${current}/${total}: ${title}`,
+            progress: Math.round(((current - 1) / total) * 100),
+          }),
+        { openReview: false },
+      );
       if (stats.proposals.length) {
         popup.close();
         popupClosed = true;
@@ -942,7 +1015,7 @@ export class EnrichmentFactory {
       } else {
         const message = stats.errors.length
           ? `No suggestions found. ${stats.errors[0]}`
-          : `No matching metadata found (${stats.notFound} unresolved; ${stats.skipped} skipped).`;
+          : noSuggestionMessage(stats);
         popup.changeLine({
           text: message,
           progress: 100,

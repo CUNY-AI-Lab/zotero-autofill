@@ -73,7 +73,13 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/zotero"
           cd "$RUNNER_TEMP/zotero"
-          wget -q -O zotero.tar.bz2 "https://www.zotero.org/download/client/dl?platform=linux-x86_64&channel=${{ matrix.channel }}"
-          tar -xjf zotero.tar.bz2
+          curl -fsSL -o zotero.archive "https://www.zotero.org/download/client/dl?platform=linux-x86_64&channel=${{ matrix.channel }}"
+          # Builds are .tar.xz now and were .tar.bz2; refuse anything else (e.g. an HTML error page).
+          case "$(file -b zotero.archive)" in
+            XZ*|bzip2*) ;;
+            *) echo "::error::Zotero download is not an xz/bzip2 archive: $(file -b zotero.archive)"; head -c 300 zotero.archive; exit 1 ;;
+          esac
+          tar -xf zotero.archive
+          test -x Zotero_linux-x86_64/zotero
           echo "ZOTERO_PLUGIN_ZOTERO_BIN_PATH=$PWD/Zotero_linux-x86_64/zotero" >> "$GITHUB_ENV"
       - run: npm run test
