@@ -6,6 +6,12 @@ import {
   resolveSavedCailModel,
 } from "./llmClient";
 import { getPref, setPref } from "../utils/prefs";
+import {
+  getApiKey,
+  migrateKeysFromPrefs,
+  setApiKey,
+  type KeyName,
+} from "../utils/keystore";
 
 const id = (name: string) =>
   `zotero-prefpane-${addon.data.config.addonRef}-${name}`;
@@ -51,8 +57,31 @@ async function populateModelMenu(window: Window, provider: string) {
   menu.value = selected;
 }
 
+/** Key fields read and write the login manager, not preferences. */
+async function wireKeyField(doc: Document, field: string, name: KeyName) {
+  const input = doc.getElementById(id(field)) as HTMLInputElement | null;
+  const status = doc.getElementById("metadata-key-status");
+  if (!input) return;
+  const fail = (error: unknown) => {
+    if (status) status.textContent = String((error as Error).message || error);
+  };
+  try {
+    await migrateKeysFromPrefs();
+    input.value = getApiKey(name);
+  } catch (error) {
+    fail(error);
+  }
+  input.addEventListener("change", () => {
+    setApiKey(name, input.value).then(() => {
+      if (status) status.textContent = "";
+    }, fail);
+  });
+}
+
 export async function registerPrefsScripts(_window: Window): Promise<void> {
   const doc = _window.document;
+  await wireKeyField(doc, "cail-apikey", "cailApiKey");
+  await wireKeyField(doc, "apikey", "openrouterApiKey");
   doc.getElementById("metadata-privacy")?.setAttribute("role", "note");
   const menu = doc.getElementById(id("llmmodel"));
   menu?.addEventListener("command", () => {

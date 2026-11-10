@@ -4,6 +4,7 @@
  */
 
 import { getPref, setPref } from "../utils/prefs";
+import { hasLegacyKeyPref, migrateKeysFromPrefs } from "../utils/keystore";
 import {
   getCatalogModels,
   hasLiveCatalog,
@@ -284,7 +285,16 @@ export async function ensureCatalogAndModel(): Promise<void> {
  * Check if LLM features are available (API key is set)
  */
 export function isLLMAvailable(): boolean {
-  return getProviderKey().length > 0;
+  try {
+    return (
+      getProviderKey().length > 0 ||
+      // Not yet migrated; callOpenRouter moves it into the key store first.
+      hasLegacyKeyPref(getProviderConfig().keyPreference)
+    );
+  } catch {
+    // Key store unavailable: report available so the call surfaces its error.
+    return true;
+  }
 }
 
 // ==================== Core LLM Functions ====================
@@ -307,8 +317,14 @@ export async function callOpenRouter(
   },
 ): Promise<LLMResponse> {
   const provider = getConfiguredProvider();
-  const apiKey = getProviderKey(provider);
-  if (!isLLMAvailable()) {
+  let apiKey: string;
+  try {
+    await migrateKeysFromPrefs();
+    apiKey = getProviderKey(provider);
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+  if (!apiKey) {
     return {
       success: false,
       error: getMissingProviderKeyMessage(provider),

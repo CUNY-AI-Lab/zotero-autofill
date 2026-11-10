@@ -1,6 +1,7 @@
 import { assert } from "chai";
 import { config } from "../package.json";
 import { setPref, clearPref } from "../src/utils/prefs";
+import { setApiKey } from "../src/utils/keystore";
 
 // Drives the plugin's own bundle (Zotero[instance].api, exposed in test builds
 // only) against test/support/stubServer.ts, so Zotero.HTTP.request behaves as
@@ -10,9 +11,9 @@ const api = () => instance().api;
 const root = () =>
   `http://127.0.0.1:${Services.env.get("METADATA_ASSISTANT_STUB_PORT")}`;
 
-async function script(responses: object[]) {
+async function script(responses: object[], catalog?: object) {
   await Zotero.HTTP.request("POST", `${root()}/__control`, {
-    body: JSON.stringify({ responses }),
+    body: JSON.stringify({ responses, catalog }),
     headers: { "Content-Type": "application/json" },
   });
 }
@@ -31,16 +32,16 @@ const msgs = [{ role: "user", content: "hi" }];
 describe("CAIL Gateway client in real Zotero", function () {
   this.timeout(30000);
 
-  before(function () {
+  before(async function () {
     instance().data.testBaseUrl = `${root()}/v1`;
     setPref("aiProvider", "cail");
-    setPref("cailApiKey", "sk-cail-integration-test");
+    await setApiKey("cailApiKey", "sk-cail-integration-test");
   });
 
-  after(function () {
+  after(async function () {
     delete instance().data.testBaseUrl;
     clearPref("aiProvider");
-    clearPref("cailApiKey");
+    await setApiKey("cailApiKey", "");
   });
 
   it("makes exactly one request for a 503 without x-should-retry", async function () {
@@ -125,5 +126,45 @@ describe("CAIL Gateway client in real Zotero", function () {
     const log = await stubLog();
     assert.lengthOf(log, 1, "no further batch was requested");
     assert.isTrue(log[0].closedEarly, "stub saw the connection close");
+  });
+
+  it("fetches the real catalog over HTTP and migrates a removed model", async function () {
+    await script([], {
+      object: "list",
+      data: [
+        {
+          id: "deepseek-v4.1-flash-1017",
+          name: "DeepSeek V4.1 Flash",
+          order: 1,
+          recommended: true,
+          status: "active",
+          capabilities: ["text-generation", "reasoning"],
+        },
+        {
+          id: "glm-5.3",
+          name: "GLM 5.3",
+          order: 2,
+          status: "active",
+          capabilities: ["text-generation"],
+        },
+      ],
+    });
+    setPref("catalogCache", "");
+    api().resetCatalogCache();
+    setPref("llmModel", "retired-model");
+    await api().ensureCatalogAndModel();
+    assert.equal(
+      Zotero.Prefs.get(`${config.prefsPrefix}.llmModel`, true),
+      "deepseek-v4.1-flash-1017",
+    );
+    const cache = JSON.parse(
+      Zotero.Prefs.get(`${config.prefsPrefix}.catalogCache`, true) as string,
+    );
+    assert.deepEqual(
+      cache.models.map((m: { id: string }) => m.id),
+      ["deepseek-v4.1-flash-1017", "glm-5.3"],
+    );
+    clearPref("catalogCache");
+    clearPref("llmModel");
   });
 });

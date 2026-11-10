@@ -49,7 +49,7 @@ The dialogs use labelled native inputs and buttons. Navigate with Tab, use Space
 - **AI:** when a provider key is configured, sends pasted bibliography text, query text, or candidate metadata through the selected provider to DeepSeek V4. Without a key, catalogue lookup still works but bibliography parsing shows an add-a-key error.
 - **Provider access:** CUNY users can create a personal key through [CUNY Model Access](https://ailab.gc.cuny.edu/docs/api-keys/). The gateway uses `https://tools.ailab.gc.cuny.edu/v1` and its CUNY quota. OpenRouter uses your OpenRouter account and credits.
 - **Billing:** OpenRouter charges your account; CUNY Gateway requests use the CUNY allocation and quota. Check the selected provider before large imports.
-- **Storage:** the API key is stored in local Zotero preferences. Original bibliography text and change-history notes become part of your Zotero library and follow its sync/sharing settings.
+- **Storage:** the API key is stored in your profile's Firefox login manager (the saved-password store Zotero uses), not in plaintext preferences; a key saved by an earlier version is moved there on first start and the old preference is cleared. If you use a master password, you may be asked to unlock it, and AI features report an error until you do. Original bibliography text and change-history notes become part of your Zotero library and follow its sync/sharing settings.
 - **Provider policies:** retention and processing depend on OpenRouter and the selected provider. The plugin does not promise institutional approval, confidential processing, or zero retention.
 
 Remove the selected provider’s key to stop AI requests and continue using catalogue lookup. Review text before sending it to an external service.

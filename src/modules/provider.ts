@@ -1,4 +1,5 @@
 import { getPref } from "../utils/prefs";
+import { getApiKey } from "../utils/keystore";
 import { config as pluginConfig } from "../../package.json";
 
 export type LLMProvider = "openrouter" | "cail";
@@ -39,8 +40,7 @@ export function getProviderConfig(requested?: string): ProviderConfig {
 
 export function getProviderKey(requested?: string): string {
   const config = getProviderConfig(requested);
-  const key = getPref(config.keyPreference) as string;
-  return typeof key === "string" ? key.trim() : "";
+  return getApiKey(config.keyPreference);
 }
 
 /**

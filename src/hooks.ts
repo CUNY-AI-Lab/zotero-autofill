@@ -4,6 +4,7 @@ import { BibliographyImportFactory } from "./modules/bibliographyImport";
 import { getString, initLocale } from "./utils/locale";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { createZToolkit } from "./utils/ztoolkit";
+import { migrateKeysFromPrefs } from "./utils/keystore";
 
 async function onStartup() {
   await Promise.all([
@@ -13,6 +14,9 @@ async function onStartup() {
   ]);
 
   initLocale();
+
+  // Move any API key saved in plaintext preferences into the login manager.
+  await migrateKeysFromPrefs().catch((error) => ztoolkit.log(error));
 
   // Register preference pane
   registerPrefs();

@@ -31,6 +31,7 @@ test("provider URLs append one chat completions path", () => {
 });
 
 test("missing selected provider key gives an actionable message", () => {
+  globalThis.__fakeLogins.length = 0;
   assert.equal(provider.getProviderKey("cail"), "");
   assert.match(
     provider.getMissingProviderKeyMessage("cail"),
@@ -41,7 +42,10 @@ test("missing selected provider key gives an actionable message", () => {
     provider.getMissingProviderKeyMessage("cail"),
     /ailab\.gc\.cuny\.edu/,
   );
-  prefs.cailApiKey = "cail-test-key";
+  globalThis.__fakeLogins.push({
+    username: "cailApiKey",
+    password: "cail-test-key",
+  });
   assert.equal(provider.getProviderKey("cail"), "cail-test-key");
 });
 

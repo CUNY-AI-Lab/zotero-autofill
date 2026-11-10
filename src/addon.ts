@@ -1,7 +1,12 @@
 import { config } from "../package.json";
 import { ColumnOptions, DialogHelper } from "zotero-plugin-toolkit";
 import hooks from "./hooks";
-import { callOpenRouter, parseBibliographyWithLLM } from "./modules/llmClient";
+import {
+  callOpenRouter,
+  ensureCatalogAndModel,
+  parseBibliographyWithLLM,
+  resetCatalogCache,
+} from "./modules/llmClient";
 import { createZToolkit } from "./utils/ztoolkit";
 
 class Addon {
@@ -40,7 +45,14 @@ class Addon {
     this.hooks = hooks;
     // Test builds expose the LLM client so integration tests drive the real bundle.
     this.api =
-      __env__ === "test" ? { callOpenRouter, parseBibliographyWithLLM } : {};
+      __env__ === "test"
+        ? {
+            callOpenRouter,
+            ensureCatalogAndModel,
+            parseBibliographyWithLLM,
+            resetCatalogCache,
+          }
+        : {};
   }
 }
 

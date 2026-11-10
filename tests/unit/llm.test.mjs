@@ -51,6 +51,7 @@ test("CUNY requests use the gateway endpoint and app header", async () => {
 });
 
 test("missing CUNY key returns an actionable error", async () => {
+  globalThis.__fakeLogins.length = 0;
   cailKey = "";
   const result = await llm.callOpenRouter([]);
   assert.equal(result.success, false);
@@ -107,6 +108,21 @@ test("a legacy proprietary preference falls back to the open-weight default", ()
   selectedModel = "openai/gpt-4o-mini";
   assert.equal(llm.getConfiguredModel(), "deepseek/deepseek-v4.1-flash");
   selectedModel = "deepseek/deepseek-v4.1-flash";
+});
+
+test("a locked key store becomes an AI error, not a thrown exception", async () => {
+  const original = globalThis.Services.logins.findLogins;
+  globalThis.Services.logins.findLogins = () => {
+    throw new Error("locked");
+  };
+  try {
+    assert.equal(llm.isLLMAvailable(), true);
+    const result = await llm.callOpenRouter([]);
+    assert.equal(result.success, false);
+    assert.match(result.error, /saved-password store/);
+  } finally {
+    globalThis.Services.logins.findLogins = original;
+  }
 });
 
 test("disambiguation rejects invalid indexes and confidence without selecting first", async () => {
