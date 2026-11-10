@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const manifest = JSON.parse(await readFile("addon/manifest.json", "utf8"));
 const zotero = manifest.applications.zotero;
 
-test("manifest declares Zotero 10 compatibility", () => {
+test("manifest declares Zotero 7 through 11.0.x compatibility", () => {
   assert.equal(zotero.strict_min_version, "6.999");
-  assert.equal(zotero.strict_max_version, "10.0.*");
+  assert.equal(zotero.strict_max_version, "11.0.*");
 });
