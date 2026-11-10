@@ -94,6 +94,40 @@ function fillTemplate(template: string, values: Record<string, string>) {
   );
 }
 
+/** Replaceable in tests so retry and batch waits do not take real time. */
+export const llmRuntime = { sleep };
+
+const MAX_RETRY_AFTER_MS = 30000;
+
+function responseHeader(xhr: any, name: string): string | undefined {
+  try {
+    return xhr?.getResponseHeader?.(name) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Read an error body that may be a string or already-parsed JSON; never throws. */
+function readErrorBody(xhr: any): any {
+  for (const read of [() => xhr?.response, () => xhr?.responseText]) {
+    let body: any;
+    try {
+      body = read();
+    } catch {
+      continue;
+    }
+    if (typeof body === "string") {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        continue;
+      }
+    }
+    if (body && typeof body === "object") return body;
+  }
+  return undefined;
+}
+
 export const OPEN_WEIGHT_MODELS = [
   "deepseek/deepseek-v4.1-flash",
   "deepseek/deepseek-v4-pro",
@@ -148,7 +182,10 @@ export function isLLMAvailable(): boolean {
 // ==================== Core LLM Functions ====================
 
 /**
- * Call the configured provider with retry logic
+ * Call the configured provider. OpenRouter retries 429/5xx/timeouts with
+ * backoff. The CAIL Gateway makes one attempt, plus at most one retry when it
+ * sends `x-should-retry: true` (timeouts and quota denials are never retried
+ * because the first attempt may already have been charged).
  */
 export async function callOpenRouter(
   messages: Array<{ role: string; content: string }>,
@@ -171,7 +208,10 @@ export async function callOpenRouter(
   const model = getConfiguredModel(options?.model);
   const temperature = options?.temperature ?? 0;
   const timeout = options?.timeout ?? 60000;
-  const maxRetries = Math.max(1, Math.min(5, options?.maxRetries ?? 3));
+  const isCail = provider === "cail";
+  const maxRetries = isCail
+    ? 2
+    : Math.max(1, Math.min(5, options?.maxRetries ?? 3));
   const baseDelay = 2000;
 
   const url = getChatCompletionsUrl(provider);
@@ -190,12 +230,17 @@ export async function callOpenRouter(
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
           ...(providerConfig.id === "cail"
-            ? { "X-CAIL-App": "zotero-metadata-assistant" }
+            ? {
+                "X-CAIL-App": "zotero-metadata-assistant",
+              }
             : {}),
         },
         body: JSON.stringify(payload),
         timeout,
         responseType: "json",
+        // Zotero.HTTP.request retries 5xx on its own by default; the Gateway
+        // decides retries itself.
+        ...(isCail ? { errorDelayMax: 0 } : {}),
       });
 
       const data = response.response as any;
@@ -224,16 +269,42 @@ export async function callOpenRouter(
 
       throw new Error("Invalid response structure");
     } catch (error: any) {
-      const status = error.status ?? error.xmlhttp?.status;
-      const isRateLimit = status === 429 || (status >= 500 && status <= 599);
+      const xhr = error.xmlhttp;
+      const status: number | undefined = error.status ?? xhr?.status;
       const isTimeout = /timeout|timed out/i.test(error.message || "");
+      const apiError = xhr ? readErrorBody(xhr)?.error : undefined;
 
-      if ((isRateLimit || isTimeout) && attempt < maxRetries - 1) {
-        const delay = baseDelay * Math.pow(2, attempt);
+      let willRetry = false;
+      let delay = baseDelay * Math.pow(2, attempt);
+      if (attempt < maxRetries - 1) {
+        if (isCail) {
+          if (
+            !isTimeout &&
+            apiError?.code !== "quota_exceeded" &&
+            responseHeader(xhr, "x-should-retry")?.trim().toLowerCase() ===
+              "true"
+          ) {
+            willRetry = true;
+            const seconds = parseFloat(
+              responseHeader(xhr, "retry-after") ?? "",
+            );
+            delay = Number.isFinite(seconds)
+              ? Math.min(Math.max(seconds * 1000, 0), MAX_RETRY_AFTER_MS)
+              : 1000;
+          }
+        } else {
+          willRetry =
+            status === 429 ||
+            (status !== undefined && status >= 500 && status <= 599) ||
+            isTimeout;
+        }
+      }
+
+      if (willRetry) {
         ztoolkit.log(
           `LLM request failed (attempt ${attempt + 1}/${maxRetries}), retrying in ${delay / 1000}s...`,
         );
-        await sleep(delay);
+        await llmRuntime.sleep(delay);
         continue;
       }
 
