@@ -128,6 +128,36 @@ function readErrorBody(xhr: any): any {
   return undefined;
 }
 
+function describeApiError(
+  apiError: any,
+  requestId: string | undefined,
+  fallback: string,
+): string {
+  const message =
+    typeof apiError?.message === "string" && apiError.message.trim()
+      ? apiError.message.trim()
+      : fallback;
+  const details = [
+    typeof apiError?.code === "string" && apiError.code
+      ? `code: ${apiError.code}`
+      : "",
+    requestId ? `request ID: ${requestId}` : "",
+  ].filter(Boolean);
+  return details.length ? `${message} (${details.join(", ")})` : message;
+}
+
+function statusFallback(status: number): string {
+  if (status === 401 || status === 403)
+    return "The AI provider rejected the API key. Check it in Zotero Settings → Metadata Assistant.";
+  if (status === 404)
+    return "The AI provider could not find the requested model or endpoint.";
+  if (status === 429)
+    return "The AI provider is rate limiting requests or your quota is used up. Try again later.";
+  if (status >= 500)
+    return "The AI provider had a server error. Try again later.";
+  return "The AI provider rejected the request.";
+}
+
 export const OPEN_WEIGHT_MODELS = [
   "deepseek/deepseek-v4.1-flash",
   "deepseek/deepseek-v4-pro",
@@ -246,7 +276,14 @@ export async function callOpenRouter(
       const data = response.response as any;
 
       if (data?.error) {
-        throw new Error(data.error.message || "API error");
+        return {
+          success: false,
+          error: describeApiError(
+            data.error,
+            responseHeader(response, "x-cail-request-id"),
+            "API error",
+          ),
+        };
       }
 
       if (data?.choices?.[0]?.finish_reason === "length") {
@@ -308,6 +345,16 @@ export async function callOpenRouter(
         continue;
       }
 
+      if (status !== undefined) {
+        return {
+          success: false,
+          error: describeApiError(
+            apiError,
+            responseHeader(xhr, "x-cail-request-id"),
+            statusFallback(status),
+          ),
+        };
+      }
       return {
         success: false,
         error: error.message || "Unknown error",
