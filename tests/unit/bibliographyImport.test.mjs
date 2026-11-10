@@ -1,3 +1,4 @@
+import { setImmediate } from "node:timers";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadModule } from "./helpers.mjs";
@@ -46,13 +47,17 @@ function windowMock() {
         return [];
       },
     },
-    addEventListener() {},
+    listeners: {},
+    addEventListener(name, callback) {
+      this.listeners[name] = callback;
+    },
   };
 }
 const windows = [];
 const items = [];
 let failSecond = true;
 let requestGate;
+let requestCount = 0;
 const research = { id: 7, libraryID: 42, name: "Research" };
 // Zotero 7–9 pane: single-selection getters only.
 let pane = {
@@ -149,6 +154,7 @@ globalThis.Zotero = {
   },
   HTTP: {
     async request() {
+      requestCount++;
       if (requestGate) await requestGate;
       return {
         response: {
@@ -243,4 +249,23 @@ test("Zotero 10 selection: several collections import to the library root", asyn
   assert.equal(saved.length, 2);
   assert.ok(saved.every((item) => item.libraryID === 42));
   assert.ok(saved.every((item) => item.collectionID === undefined));
+});
+test("closing the dialog stops further batch requests", async () => {
+  openImportDialog();
+  const { win, args } = windows.at(-1);
+  win.document.getElementById("bibliography-input").value = Array.from(
+    { length: 30 },
+    (_, i) => `citation ${i}`,
+  ).join("\n");
+  requestCount = 0;
+  let release;
+  requestGate = new Promise((resolve) => (release = resolve));
+  const pending = args.onParse();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requestCount, 1);
+  win.listeners.unload();
+  release();
+  await pending;
+  requestGate = undefined;
+  assert.equal(requestCount, 1);
 });

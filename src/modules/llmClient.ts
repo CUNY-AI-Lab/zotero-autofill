@@ -87,6 +87,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Replaceable in tests so retry and batch waits do not take real time. */
+export const llmRuntime = { sleep };
+
 /** Single-pass {name} substitution: inserted text is never re-scanned or interpreted. */
 function fillTemplate(template: string, values: Record<string, string>) {
   return template.replace(/\{(\w+)\}/g, (match, name: string) =>
@@ -94,8 +97,17 @@ function fillTemplate(template: string, values: Record<string, string>) {
   );
 }
 
-/** Replaceable in tests so retry and batch waits do not take real time. */
-export const llmRuntime = { sleep };
+function newRequestId(): string {
+  const c = (globalThis as any).crypto;
+  if (typeof c?.randomUUID === "function") return c.randomUUID();
+  const b = new Uint8Array(16);
+  if (typeof c?.getRandomValues === "function") c.getRandomValues(b);
+  else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
 
 const MAX_RETRY_AFTER_MS = 30000;
 
@@ -224,6 +236,7 @@ export async function callOpenRouter(
     temperature?: number;
     timeout?: number;
     maxRetries?: number;
+    signal?: AbortSignal;
   },
 ): Promise<LLMResponse> {
   const provider = getConfiguredProvider();
@@ -243,6 +256,7 @@ export async function callOpenRouter(
     ? 2
     : Math.max(1, Math.min(5, options?.maxRetries ?? 3));
   const baseDelay = 2000;
+  const signal = options?.signal;
 
   const url = getChatCompletionsUrl(provider);
   const providerConfig = getProviderConfig(provider);
@@ -254,6 +268,10 @@ export async function callOpenRouter(
   };
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (signal?.aborted) return { success: false, error: "Cancelled" };
+    const requestId = isCail ? newRequestId() : undefined;
+    let cancel: (() => void) | undefined;
+    const onAbort = () => cancel?.();
     try {
       const response = await Zotero.HTTP.request("POST", url, {
         headers: {
@@ -262,6 +280,7 @@ export async function callOpenRouter(
           ...(providerConfig.id === "cail"
             ? {
                 "X-CAIL-App": "zotero-metadata-assistant",
+                "x-cail-request-id": requestId,
               }
             : {}),
         },
@@ -271,6 +290,10 @@ export async function callOpenRouter(
         // Zotero.HTTP.request retries 5xx on its own by default; the Gateway
         // decides retries itself.
         ...(isCail ? { errorDelayMax: 0 } : {}),
+        cancellerReceiver: (fn: () => void) => {
+          cancel = fn;
+          signal?.addEventListener("abort", onAbort, { once: true });
+        },
       });
 
       const data = response.response as any;
@@ -280,7 +303,7 @@ export async function callOpenRouter(
           success: false,
           error: describeApiError(
             data.error,
-            responseHeader(response, "x-cail-request-id"),
+            responseHeader(response, "x-cail-request-id") || requestId,
             "API error",
           ),
         };
@@ -306,6 +329,7 @@ export async function callOpenRouter(
 
       throw new Error("Invalid response structure");
     } catch (error: any) {
+      if (signal?.aborted) return { success: false, error: "Cancelled" };
       const xhr = error.xmlhttp;
       const status: number | undefined = error.status ?? xhr?.status;
       const isTimeout = /timeout|timed out/i.test(error.message || "");
@@ -313,7 +337,7 @@ export async function callOpenRouter(
 
       let willRetry = false;
       let delay = baseDelay * Math.pow(2, attempt);
-      if (attempt < maxRetries - 1) {
+      if (attempt < maxRetries - 1 && !signal?.aborted) {
         if (isCail) {
           if (
             !isTimeout &&
@@ -350,7 +374,7 @@ export async function callOpenRouter(
           success: false,
           error: describeApiError(
             apiError,
-            responseHeader(xhr, "x-cail-request-id"),
+            responseHeader(xhr, "x-cail-request-id") || requestId,
             statusFallback(status),
           ),
         };
@@ -359,6 +383,8 @@ export async function callOpenRouter(
         success: false,
         error: error.message || "Unknown error",
       };
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
     }
   }
 
@@ -652,6 +678,7 @@ export async function parseBibliographyWithLLM(
   entries: string[],
   batchSize = 25,
   progressCallback?: (current: number, total: number) => void,
+  signal?: AbortSignal,
 ): Promise<{
   items: any[];
   failed: string[];
@@ -677,6 +704,7 @@ export async function parseBibliographyWithLLM(
   batchSize =
     Number.isInteger(batchSize) && batchSize > 0 ? Math.min(batchSize, 25) : 25;
   for (let start = 0; start < entries.length; start += batchSize) {
+    if (signal?.aborted) break;
     const batch = mapped.slice(start, start + batchSize);
     progressCallback?.(start, entries.length);
     const response = await callOpenRouter(
@@ -694,7 +722,7 @@ export async function parseBibliographyWithLLM(
           }),
         },
       ],
-      { timeout: 180000, model },
+      { timeout: 180000, model, signal },
     );
     if (!response.success || !response.content) {
       batch.forEach((entry) => {
@@ -742,7 +770,8 @@ export async function parseBibliographyWithLLM(
       Math.min(start + batchSize, entries.length),
       entries.length,
     );
-    if (start + batchSize < entries.length) await sleep(1000);
+    if (start + batchSize < entries.length && !signal?.aborted)
+      await llmRuntime.sleep(1000);
   }
   return finish();
 }

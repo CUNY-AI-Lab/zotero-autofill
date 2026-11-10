@@ -170,6 +170,7 @@ export function openImportDialog(): void {
   let entries: ReviewEntry[] = [];
   let busy = false;
   let closed = false;
+  const abortController = new AbortController();
   const doc = () => win.document;
   const status = (message: string) => {
     if (!closed) doc().getElementById("results-text")!.textContent = message;
@@ -392,6 +393,7 @@ export function openImportDialog(): void {
       });
       win.addEventListener("unload", () => {
         closed = true;
+        abortController.abort();
       });
       if (!library.editable)
         status(
@@ -420,6 +422,7 @@ export function openImportDialog(): void {
           originals,
           25,
           (current, total) => status(`Parsing ${current}/${total} entries…`),
+          abortController.signal,
         );
         if (closed) return;
         entries = result.entries.map((entry) => ({
