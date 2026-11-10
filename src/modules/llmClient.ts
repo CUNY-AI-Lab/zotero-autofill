@@ -204,6 +204,14 @@ export async function callOpenRouter(
         throw new Error(data.error.message || "API error");
       }
 
+      if (data?.choices?.[0]?.finish_reason === "length") {
+        return {
+          success: false,
+          error:
+            "The model's response was cut off; try importing fewer entries at once.",
+        };
+      }
+
       if (
         typeof data?.choices?.[0]?.message?.content === "string" &&
         data.choices[0].message.content.trim()
