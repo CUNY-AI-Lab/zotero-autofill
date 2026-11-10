@@ -15,7 +15,7 @@ declare const rootURI: string;
 
 declare const addon: import("../src/addon").default;
 
-declare const __env__: "production" | "development";
+declare const __env__: "production" | "development" | "test";
 
 // Zotero 10 multi-selection getters, absent before Zotero 10.
 declare namespace _ZoteroTypes {

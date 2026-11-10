@@ -1,6 +1,7 @@
 import { config } from "../package.json";
 import { ColumnOptions, DialogHelper } from "zotero-plugin-toolkit";
 import hooks from "./hooks";
+import { callOpenRouter, parseBibliographyWithLLM } from "./modules/llmClient";
 import { createZToolkit } from "./utils/ztoolkit";
 
 class Addon {
@@ -8,8 +9,10 @@ class Addon {
     alive: boolean;
     config: typeof config;
     // Env type, see build.js
-    env: "development" | "production";
+    env: "development" | "production" | "test";
     initialized?: boolean;
+    /** Test-only CAIL base URL override; see provider.ts. */
+    testBaseUrl?: string;
     ztoolkit: ZToolkit;
     locale?: {
       current: any;
@@ -35,7 +38,9 @@ class Addon {
       ztoolkit: createZToolkit(),
     };
     this.hooks = hooks;
-    this.api = {};
+    // Test builds expose the LLM client so integration tests drive the real bundle.
+    this.api =
+      __env__ === "test" ? { callOpenRouter, parseBibliographyWithLLM } : {};
   }
 }
 

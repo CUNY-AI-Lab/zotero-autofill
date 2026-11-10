@@ -1,6 +1,9 @@
 import type { Plugin } from "esbuild";
 import { defineConfig } from "zotero-plugin-scaffold";
 import pkg from "./package.json";
+import { startStubServer } from "./test/support/stubServer";
+
+let stubServer: Awaited<ReturnType<typeof startStubServer>> | undefined;
 
 // The toolkit registers deprecated zotero://plugin and zotero://ztoolkit-debug
 // handlers, which let a link install add-ons or run code. The plugin uses
@@ -63,6 +66,14 @@ export default defineConfig({
 
   test: {
     waitForPlugin: `() => Zotero.${pkg.config.addonInstance}.data.initialized`,
+    hooks: {
+      "test:init": async () => {
+        stubServer = await startStubServer();
+      },
+      "test:exit": () => {
+        stubServer?.close();
+      },
+    },
   },
 
   // If you need to see a more detailed log, uncomment the following line:

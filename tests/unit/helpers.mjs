@@ -12,6 +12,7 @@ export async function loadModule(entry) {
     platform: "node",
     format: "esm",
     outfile,
+    define: { __env__: '"production"' },
     logLevel: "silent",
   });
   return import(pathToFileURL(outfile).href);

@@ -1,4 +1,5 @@
 import { getPref } from "../utils/prefs";
+import { config as pluginConfig } from "../../package.json";
 
 export type LLMProvider = "openrouter" | "cail";
 
@@ -42,8 +43,25 @@ export function getProviderKey(requested?: string): string {
   return typeof key === "string" ? key.trim() : "";
 }
 
+/**
+ * Integration tests point the CAIL provider at a local stub through
+ * `Zotero[addonInstance].data.testBaseUrl`. It is honored only in builds made
+ * by `npm test` (`__env__ === "test"`), and no preference or UI can set it.
+ */
+function getBaseUrl(config: ProviderConfig): string {
+  if (config.id === "cail" && __env__ === "test") {
+    const instance = (Zotero as any)[pluginConfig.addonInstance];
+    if (instance?.data?.testBaseUrl) return instance.data.testBaseUrl;
+  }
+  return config.baseUrl;
+}
+
 export function getChatCompletionsUrl(requested?: string): string {
-  return `${getProviderConfig(requested).baseUrl}/chat/completions`;
+  return `${getBaseUrl(getProviderConfig(requested))}/chat/completions`;
+}
+
+export function getCatalogUrl(): string {
+  return `${getBaseUrl(PROVIDERS.cail)}/catalog`;
 }
 
 export function getMissingProviderKeyMessage(requested?: string): string {
