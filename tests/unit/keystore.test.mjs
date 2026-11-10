@@ -165,3 +165,71 @@ test("a login manager that never answers cannot hang callers", async () => {
   assert.equal(prefs.cailApiKey, "sk-cail-old");
   assert.match(keystore.getKeyStoreProblem().cause.message, /did not respond/);
 });
+
+test("after a downgrade, a key typed into the old version replaces the stored one", async () => {
+  // 1.1.2 stored key A and cleared the pref; 1.1.1 then saved key B in the
+  // pref (the only way the pref can be non-empty again); back on 1.1.2:
+  reset();
+  await keystore.setApiKey("cailApiKey", "sk-cail-A");
+  keystore.resetKeyStoreState();
+  prefs.cailApiKey = "sk-cail-B";
+  await keystore.migrateKeysFromPrefs();
+  assert.equal(keystore.getApiKey("cailApiKey"), "sk-cail-B");
+  assert.equal(prefs.cailApiKey, "");
+  assert.deepEqual(
+    globalThis.__fakeLogins.map((l) => l.password),
+    ["sk-cail-B"],
+  );
+});
+
+test("overlapping saves and migrations run one at a time: no duplicates, last value wins", async () => {
+  reset({ cailApiKey: "sk-cail-old" });
+  // A slow store that would interleave unserialized calls.
+  const slow =
+    (fn) =>
+    async (...args) => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      return fn(...args);
+    };
+  globalThis.Services.logins = {
+    initializationPromise: Promise.resolve(),
+    searchLoginsAsync: slow(modern.searchLoginsAsync),
+    addLoginAsync: slow(async (login) => {
+      if (globalThis.__fakeLogins.some((l) => l.username === login.username))
+        throw new Error("This login already exists.");
+      return modern.addLoginAsync(login);
+    }),
+    modifyLoginAsync: slow(modern.modifyLoginAsync),
+    removeLoginAsync: slow(modern.removeLoginAsync),
+  };
+  const results = await Promise.all([
+    keystore.migrateKeysFromPrefs(),
+    keystore.migrateKeysFromPrefs(),
+    keystore.setApiKey("openrouterApiKey", "or-1"),
+    keystore.setApiKey("openrouterApiKey", "or-2"),
+    keystore.setApiKey("googleBooksApiKey", "g-1"),
+  ]);
+  assert.equal(keystore.getKeyStoreProblem(), undefined);
+  for (const r of results.slice(2)) assert.equal(r.persisted, true);
+  const byName = Object.fromEntries(
+    globalThis.__fakeLogins.map((l) => [l.username, l.password]),
+  );
+  assert.deepEqual(byName, {
+    cailApiKey: "sk-cail-old",
+    openrouterApiKey: "or-2",
+    googleBooksApiKey: "g-1",
+  });
+  assert.equal(globalThis.__fakeLogins.length, 3);
+  assert.equal(prefs.cailApiKey, "");
+  assert.equal(notices, 0);
+});
+
+test("the Google Books key is only ever in the login manager", async () => {
+  reset();
+  await keystore.setApiKey("googleBooksApiKey", "AIza-dummy");
+  assert.equal(keystore.getApiKey("googleBooksApiKey"), "AIza-dummy");
+  assert.ok(!JSON.stringify(prefs).includes("AIza"));
+  keystore.resetKeyStoreState();
+  await keystore.migrateKeysFromPrefs();
+  assert.equal(keystore.getApiKey("googleBooksApiKey"), "AIza-dummy");
+});

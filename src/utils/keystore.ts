@@ -16,6 +16,15 @@
  * version in a plaintext preference is left in place, stays usable, and is
  * migrated once the store works. A user's key is never deleted before it is
  * safely stored.
+ *
+ * A non-empty plaintext preference found next to a stored key can only have
+ * been written by an older version (this one clears the preference as soon as
+ * the store has the key), e.g. after a downgrade and a newly entered key, so
+ * the preference wins and replaces the stored key.
+ *
+ * Every store operation runs one at a time, so overlapping calls (startup,
+ * the settings pane, a lookup, a second window) cannot race each other into
+ * duplicate logins or an older value overwriting a newer one.
  */
 
 import { getPref, setPref } from "./prefs";
@@ -24,8 +33,16 @@ function log(message: string) {
   if (typeof ztoolkit !== "undefined") ztoolkit.log(message);
 }
 
-export type KeyName = "cailApiKey" | "openrouterApiKey";
-const KEY_NAMES: KeyName[] = ["cailApiKey", "openrouterApiKey"];
+export type KeyName = "cailApiKey" | "openrouterApiKey" | "googleBooksApiKey";
+const KEY_NAMES: KeyName[] = [
+  "cailApiKey",
+  "openrouterApiKey",
+  "googleBooksApiKey",
+];
+/** Keys that versions up to 1.1.1 kept in plaintext preferences. */
+type LegacyKeyName = "cailApiKey" | "openrouterApiKey";
+const isLegacyKey = (name: KeyName): name is LegacyKeyName =>
+  name === "cailApiKey" || name === "openrouterApiKey";
 
 export const KEYSTORE_ORIGIN = "chrome://zotero-metadata-assistant";
 export const KEYSTORE_REALM = "Zotero Metadata Assistant API key";
@@ -58,6 +75,15 @@ export class KeyStoreError extends Error {
 
 const cache = new Map<KeyName, string>();
 let loaded = false;
+let migrating: Promise<void> | undefined;
+let queue: Promise<unknown> = Promise.resolve();
+
+/** Run store operations strictly one after another. */
+function serial<T>(task: () => Promise<T>): Promise<T> {
+  const run = queue.then(task, task);
+  queue = run.catch(() => undefined);
+  return run;
+}
 let lastAttempt = 0;
 let problem: KeyStoreError | undefined;
 let noticeShown = false;
@@ -103,6 +129,8 @@ export function resetKeyStoreState() {
   lastAttempt = 0;
   problem = undefined;
   noticeShown = false;
+  migrating = undefined;
+  queue = Promise.resolve();
 }
 
 // ---- login manager access (feature-detected) ----
@@ -169,10 +197,13 @@ async function writeToStore(name: KeyName, value: string) {
 }
 
 function legacyPref(name: KeyName): string {
-  return ((getPref(name) as string | undefined) ?? "").trim();
+  if (!isLegacyKey(name)) return "";
+  const value = getPref(name) as unknown;
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function clearLegacyPref(name: KeyName) {
+  if (!isLegacyKey(name)) return;
   try {
     setPref(name, "");
   } catch (error) {
@@ -186,23 +217,32 @@ function clearLegacyPref(name: KeyName) {
  * throws. If the store fails the problem is recorded (see getKeyStoreProblem),
  * shown once, and retried at most once a minute; old preference keys stay put.
  */
-export async function migrateKeysFromPrefs(): Promise<void> {
+export function migrateKeysFromPrefs(): Promise<void> {
   const pending = KEY_NAMES.some((name) => legacyPref(name));
-  if (loaded && !pending) return;
-  if (!loaded && Date.now() - lastAttempt < RETRY_AFTER_MS && problem) return;
+  if (loaded && !pending) return Promise.resolve();
+  if (!loaded && Date.now() - lastAttempt < RETRY_AFTER_MS && problem)
+    return Promise.resolve();
+  migrating ??= serial(migrate).finally(() => {
+    migrating = undefined;
+  });
+  return migrating;
+}
+
+async function migrate(): Promise<void> {
   lastAttempt = Date.now();
   try {
     for (const name of KEY_NAMES) {
       const stored = await withTimeout(readFromStore(name));
       const legacy = legacyPref(name);
-      if (stored) {
-        // Don't clobber a key the user just typed this session.
-        if (!cache.has(name)) cache.set(name, stored);
-        if (legacy) clearLegacyPref(name);
-      } else if (legacy) {
+      if (legacy && legacy !== stored) {
+        // Only an older version writes this preference: it is the newer key.
         await withTimeout(writeToStore(name, legacy));
         if (!cache.has(name)) cache.set(name, legacy);
         clearLegacyPref(name);
+      } else {
+        // Don't clobber a key the user just typed this session.
+        if (stored && !cache.has(name)) cache.set(name, stored);
+        if (legacy) clearLegacyPref(name);
       }
     }
     loaded = true;
@@ -236,7 +276,7 @@ export async function setApiKey(
   if (trimmed) cache.set(name, trimmed);
   else cache.delete(name);
   try {
-    await withTimeout(writeToStore(name, trimmed));
+    await serial(() => withTimeout(writeToStore(name, trimmed)));
     clearLegacyPref(name);
     problem = undefined;
     return { persisted: true };

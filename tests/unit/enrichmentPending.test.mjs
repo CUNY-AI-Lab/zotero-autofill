@@ -17,6 +17,7 @@ globalThis.Zotero = {
 };
 globalThis.ztoolkit = { log() {} };
 const mod = await loadModule("src/modules/enrichment.ts");
+mod.enrichRuntime.sleep = async () => {};
 
 let nextId = 1;
 const book = () => ({
@@ -37,7 +38,7 @@ async function advance(ms, step = 1000) {
   }
 }
 
-test("every lookup request disables Zotero's own multi-minute 5xx retry", async () => {
+test("every lookup request disables Zotero's own 5xx and Retry-After retries", async () => {
   requests = [];
   hang = false;
   mock.timers.enable({ apis: ["setTimeout"] });
@@ -52,6 +53,7 @@ test("every lookup request disables Zotero's own multi-minute 5xx retry", async 
   assert.ok(requests.length > 0);
   for (const r of requests) {
     assert.equal(r.options.errorDelayMax, 0, r.url);
+    assert.equal(r.options.noRetryOnThrottle, true, r.url);
     assert.ok(r.options.timeout <= 10000);
   }
 });
@@ -73,7 +75,8 @@ test("a lookup that never answers is abandoned at its deadline and frees the ite
     // ...and not stuck after it.
     await advance(10000, 1000);
     const stats = await run;
-    assert.equal(stats.notFound, 1);
+    assert.equal(stats.failed, 1, "a timeout is a failure, not a miss");
+    assert.equal(stats.notFound, 0);
     assert.match(stats.errors[0], /Lookup timed out/);
   } finally {
     mock.timers.reset();

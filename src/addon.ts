@@ -1,7 +1,8 @@
 import { config } from "../package.json";
 import { ColumnOptions, DialogHelper } from "zotero-plugin-toolkit";
 import hooks from "./hooks";
-import { setApiKey } from "./utils/keystore";
+import { getApiKey, setApiKey } from "./utils/keystore";
+import { enrichItems, noSuggestionMessage } from "./modules/enrichment";
 import {
   callOpenRouter,
   ensureCatalogAndModel,
@@ -17,8 +18,11 @@ class Addon {
     // Env type, see build.js
     env: "development" | "production" | "test";
     initialized?: boolean;
-    /** Test-only CAIL base URL override; see provider.ts. */
+    /** Test-only overrides, read only in test builds; see utils/testHooks.ts. */
     testBaseUrl?: string;
+    testLookupBaseUrl?: string;
+    /** Settles when the settings pane last opened has finished wiring. */
+    prefsPaneReady?: Promise<void>;
     ztoolkit: ZToolkit;
     locale?: {
       current: any;
@@ -53,6 +57,9 @@ class Addon {
             parseBibliographyWithLLM,
             resetCatalogCache,
             setApiKey,
+            getApiKey,
+            enrichItems,
+            noSuggestionMessage,
           }
         : {};
   }
