@@ -87,6 +87,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Single-pass {name} substitution: inserted text is never re-scanned or interpreted. */
+function fillTemplate(template: string, values: Record<string, string>) {
+  return template.replace(/\{(\w+)\}/g, (match, name: string) =>
+    Object.prototype.hasOwnProperty.call(values, name) ? values[name] : match,
+  );
+}
+
 export const OPEN_WEIGHT_MODELS = [
   "deepseek/deepseek-v4.1-flash",
   "deepseek/deepseek-v4-pro",
@@ -246,10 +253,10 @@ export async function llmCleanupQuery(
     return null;
   }
 
-  const userPrompt = CLEANUP_USER_TEMPLATE.replace("{title}", title).replace(
-    "{author}",
+  const userPrompt = fillTemplate(CLEANUP_USER_TEMPLATE, {
+    title,
     author,
-  );
+  });
 
   const messages = [
     { role: "system", content: CLEANUP_SYSTEM_PROMPT },
@@ -312,13 +319,12 @@ export async function llmDisambiguate(
     })
     .join("\n");
 
-  const userPrompt = DISAMBIGUATION_USER_TEMPLATE.replace(
-    "{title}",
-    originalTitle,
-  )
-    .replace("{author}", originalAuthor)
-    .replace("{year}", originalYear?.toString() || "unknown")
-    .replace("{results}", resultsText);
+  const userPrompt = fillTemplate(DISAMBIGUATION_USER_TEMPLATE, {
+    title: originalTitle,
+    author: originalAuthor,
+    year: originalYear?.toString() || "unknown",
+    results: resultsText,
+  });
 
   const messages = [
     { role: "system", content: DISAMBIGUATION_SYSTEM_PROMPT },
@@ -552,15 +558,14 @@ export async function parseBibliographyWithLLM(
         { role: "system", content: BIBLIOGRAPHY_SYSTEM_PROMPT },
         {
           role: "user",
-          content: BIBLIOGRAPHY_USER_TEMPLATE.replace(
-            "{entries}",
-            JSON.stringify(
+          content: fillTemplate(BIBLIOGRAPHY_USER_TEMPLATE, {
+            entries: JSON.stringify(
               batch.map((entry) => ({
                 sourceIndex: entry.sourceIndex,
                 text: entry.original,
               })),
             ),
-          ),
+          }),
         },
       ],
       { timeout: 180000, model },
