@@ -119,6 +119,13 @@ function newRequestId(): string {
 
 const MAX_RETRY_AFTER_MS = 30000;
 
+/** Output headroom. Reasoning tokens count toward max_tokens, so reasoning models get at least the floor. */
+export const MAX_TOKENS_SHORT = 4000;
+export const MAX_TOKENS_PARSE = 16000;
+export const MAX_TOKENS_REASONING_MIN = 8000;
+/** Entries per bibliography-parse request; the Gateway gets smaller batches. */
+export const PARSE_BATCH_SIZE = { cail: 10, openrouter: 25 } as const;
+
 function responseHeader(xhr: any, name: string): string | undefined {
   try {
     return xhr?.getResponseHeader?.(name) ?? undefined;
@@ -295,6 +302,7 @@ export async function callOpenRouter(
     temperature?: number;
     timeout?: number;
     maxRetries?: number;
+    maxTokens?: number;
     signal?: AbortSignal;
   },
 ): Promise<LLMResponse> {
@@ -321,10 +329,15 @@ export async function callOpenRouter(
   const url = getChatCompletionsUrl(provider);
   const providerConfig = getProviderConfig(provider);
   const providerModel = getProviderModelId(model, provider);
+  const maxTokens = options?.maxTokens ?? MAX_TOKENS_SHORT;
   const payload = {
     model: providerModel,
     messages,
     temperature,
+    max_tokens:
+      isCail && isReasoningModel(providerModel)
+        ? Math.max(maxTokens, MAX_TOKENS_REASONING_MIN)
+        : maxTokens,
     response_format: { type: "json_object" },
   };
 
@@ -737,7 +750,7 @@ export function validateBibliographyItem(item: any): string | undefined {
 
 export async function parseBibliographyWithLLM(
   entries: string[],
-  batchSize = 25,
+  batchSize?: number,
   progressCallback?: (current: number, total: number) => void,
   signal?: AbortSignal,
 ): Promise<{
@@ -762,8 +775,11 @@ export async function parseBibliographyWithLLM(
     });
     return finish();
   }
+  const batchCap = PARSE_BATCH_SIZE[getConfiguredProvider()];
   batchSize =
-    Number.isInteger(batchSize) && batchSize > 0 ? Math.min(batchSize, 25) : 25;
+    batchSize !== undefined && Number.isInteger(batchSize) && batchSize > 0
+      ? Math.min(batchSize, batchCap)
+      : batchCap;
   for (let start = 0; start < entries.length; start += batchSize) {
     if (signal?.aborted) break;
     const batch = mapped.slice(start, start + batchSize);
@@ -783,7 +799,7 @@ export async function parseBibliographyWithLLM(
           }),
         },
       ],
-      { timeout: 180000, model, signal },
+      { timeout: 180000, model, signal, maxTokens: MAX_TOKENS_PARSE },
     );
     if (!response.success || !response.content) {
       batch.forEach((entry) => {
