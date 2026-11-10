@@ -49,9 +49,18 @@ jobs:
           path: .scaffold/build
 
   test:
+    # Integration tests run against the current stable Zotero and the beta
+    # (newer Gecko), since the plugin supports both.
+    name: test (Zotero ${{ matrix.channel }})
     runs-on: ubuntu-latest
     needs:
       - build
+    strategy:
+      fail-fast: false
+      matrix:
+        channel:
+          - release
+          - beta
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -60,4 +69,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:unit
+      - name: Download Zotero (${{ matrix.channel }})
+        run: |
+          mkdir -p "$RUNNER_TEMP/zotero"
+          cd "$RUNNER_TEMP/zotero"
+          wget -q -O zotero.tar.bz2 "https://www.zotero.org/download/client/dl?platform=linux-x86_64&channel=${{ matrix.channel }}"
+          tar -xjf zotero.tar.bz2
+          echo "ZOTERO_PLUGIN_ZOTERO_BIN_PATH=$PWD/Zotero_linux-x86_64/zotero" >> "$GITHUB_ENV"
       - run: npm run test

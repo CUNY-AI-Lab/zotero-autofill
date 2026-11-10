@@ -1,9 +1,21 @@
 /**
  * API keys live in the Firefox login manager (Services.logins), not in
- * plaintext preferences. Keys saved by earlier versions in the old
- * preferences are moved into the store (see migrateKeysFromPrefs) and the preference is
- * cleared. If the store cannot be used (for example a locked or cancelled
- * master password) we throw rather than falling back to preferences.
+ * plaintext preferences.
+ *
+ * Gecko changed this API across the Zotero versions we support (115 to 153):
+ * the synchronous findLogins/addLogin/modifyLogin/removeLogin were removed in
+ * stages, so every call goes through feature detection that prefers the async
+ * method and falls back to the sync one.
+ *
+ * Reads are served from an in-memory cache filled by `migrateKeysFromPrefs()`
+ * (run at startup and before AI calls) so the rest of the plugin stays sync.
+ *
+ * Failure policy when the login manager is unusable (locked, cancelled master
+ * password, missing backend): keys the user enters are kept in memory for the
+ * session only and are never written to preferences; a key saved by an earlier
+ * version in a plaintext preference is left in place, stays usable, and is
+ * migrated once the store works. A user's key is never deleted before it is
+ * safely stored.
  */
 
 import { getPref, setPref } from "./prefs";
@@ -13,38 +25,114 @@ function log(message: string) {
 }
 
 export type KeyName = "cailApiKey" | "openrouterApiKey";
+const KEY_NAMES: KeyName[] = ["cailApiKey", "openrouterApiKey"];
 
 export const KEYSTORE_ORIGIN = "chrome://zotero-metadata-assistant";
 export const KEYSTORE_REALM = "Zotero Metadata Assistant API key";
 
 export const KEYSTORE_UNAVAILABLE_MESSAGE =
-  "Could not use the saved-password store (Firefox login manager) for the API key. " +
-  "Unlock it (master password) and try again. The key was not read from or saved to preferences.";
+  "Zotero's saved-password store (Firefox login manager) is unavailable, so API keys cannot be saved securely. " +
+  "Keys you enter now are kept for this session only and are not written to preferences. " +
+  "If you use a master password, unlock it and restart Zotero.";
+
+/** Name and message of the underlying error. Never contains key material. */
+export function sanitizeCause(error: unknown): {
+  name: string;
+  message: string;
+} {
+  const e = error as { name?: unknown; message?: unknown } | undefined;
+  return {
+    name: String(e?.name ?? typeof error).slice(0, 80),
+    message: String(e?.message ?? error).slice(0, 200),
+  };
+}
 
 export class KeyStoreError extends Error {
-  constructor(cause?: unknown) {
-    super(KEYSTORE_UNAVAILABLE_MESSAGE, cause ? { cause } : undefined);
+  declare cause: { name: string; message: string };
+  constructor(cause: unknown) {
+    super(KEYSTORE_UNAVAILABLE_MESSAGE);
     this.name = "KeyStoreError";
-    if (cause) log(`Key store error: ${cause}`);
+    this.cause = sanitizeCause(cause);
   }
 }
 
-function logins(): any {
-  const manager = (globalThis as any).Services?.logins;
-  if (!manager) throw new KeyStoreError("Services.logins is unavailable");
-  return manager;
+const cache = new Map<KeyName, string>();
+let loaded = false;
+let lastAttempt = 0;
+let problem: KeyStoreError | undefined;
+let noticeShown = false;
+const RETRY_AFTER_MS = 60 * 1000;
+
+/** Reason the store could not be used, if the last attempt failed. */
+export function getKeyStoreProblem(): KeyStoreError | undefined {
+  return problem;
 }
 
-function find(name: KeyName): any {
-  return logins()
-    .findLogins(KEYSTORE_ORIGIN, null, KEYSTORE_REALM)
-    .find((login: any) => login.username === name);
+/** Show the unavailable-store message once per session, without blocking. */
+function noticeOnce() {
+  if (noticeShown) return;
+  noticeShown = true;
+  try {
+    new ztoolkit.ProgressWindow("Metadata Assistant")
+      .createLine({ text: KEYSTORE_UNAVAILABLE_MESSAGE, type: "default" })
+      .show();
+  } catch (error) {
+    log(`Key store notice failed: ${error}`);
+  }
 }
 
-async function writeLogin(name: KeyName, value: string) {
-  const existing = find(name);
+/** Test hook: forget session state. */
+export function resetKeyStoreState() {
+  cache.clear();
+  loaded = false;
+  lastAttempt = 0;
+  problem = undefined;
+  noticeShown = false;
+}
+
+// ---- login manager access (feature-detected) ----
+
+function manager(): any {
+  const m = (globalThis as any).Services?.logins;
+  if (!m) throw new Error("Services.logins is unavailable");
+  return m;
+}
+
+async function ready(m: any) {
+  if (m.initializationPromise) await m.initializationPromise;
+}
+
+async function findAll(m: any): Promise<any[]> {
+  const found =
+    typeof m.searchLoginsAsync === "function"
+      ? await m.searchLoginsAsync({
+          origin: KEYSTORE_ORIGIN,
+          httpRealm: KEYSTORE_REALM,
+        })
+      : m.findLogins(KEYSTORE_ORIGIN, null, KEYSTORE_REALM);
+  return Array.from(found as ArrayLike<any>);
+}
+
+/** Call the async variant when it exists, else the sync one. */
+async function call(m: any, base: string, ...args: any[]) {
+  const fn =
+    typeof m[`${base}Async`] === "function" ? m[`${base}Async`] : m[base];
+  return fn.apply(m, args);
+}
+
+async function readFromStore(name: KeyName): Promise<string> {
+  const m = manager();
+  await ready(m);
+  const login = (await findAll(m)).find((l) => l.username === name);
+  return (login?.password as string | undefined)?.trim() ?? "";
+}
+
+async function writeToStore(name: KeyName, value: string) {
+  const m = manager();
+  await ready(m);
+  const existing = (await findAll(m)).find((l) => l.username === name);
   if (!value) {
-    if (existing) logins().removeLogin(existing);
+    if (existing) await call(m, "removeLogin", existing);
     return;
   }
   const LoginInfo = (globalThis as any).Components.Constructor(
@@ -61,12 +149,14 @@ async function writeLogin(name: KeyName, value: string) {
     "",
     "",
   );
-  if (existing) logins().modifyLogin(existing, login);
-  // Zotero 10 (Firefox 140) only has the async add.
-  else await logins().addLoginAsync(login);
+  if (existing) await call(m, "modifyLogin", existing, login);
+  else await call(m, "addLogin", login);
 }
 
-/** The key is safe in the store by now; a failure to clear the old pref is only logged. */
+function legacyPref(name: KeyName): string {
+  return ((getPref(name) as string | undefined) ?? "").trim();
+}
+
 function clearLegacyPref(name: KeyName) {
   try {
     setPref(name, "");
@@ -75,44 +165,74 @@ function clearLegacyPref(name: KeyName) {
   }
 }
 
-const asKeyStoreError = (error: unknown) =>
-  error instanceof KeyStoreError ? error : new KeyStoreError(error);
-
 /**
- * Move keys saved by earlier versions in plaintext preferences into the login
- * store and clear the preferences. Run at startup and before each AI call.
+ * Load keys from the login manager into the session cache and move any key
+ * still sitting in the old plaintext preferences into the store. Never
+ * throws. If the store fails the problem is recorded (see getKeyStoreProblem),
+ * shown once, and retried at most once a minute; old preference keys stay put.
  */
 export async function migrateKeysFromPrefs(): Promise<void> {
-  for (const name of ["cailApiKey", "openrouterApiKey"] as const) {
-    const legacy = (getPref(name) as string | undefined)?.trim();
-    if (!legacy) continue;
-    try {
-      if (!find(name)) await writeLogin(name, legacy);
-    } catch (error) {
-      throw asKeyStoreError(error);
+  const pending = KEY_NAMES.some((name) => legacyPref(name));
+  if (loaded && !pending) return;
+  if (!loaded && Date.now() - lastAttempt < RETRY_AFTER_MS && problem) return;
+  lastAttempt = Date.now();
+  try {
+    for (const name of KEY_NAMES) {
+      const stored = await readFromStore(name);
+      const legacy = legacyPref(name);
+      if (stored) {
+        // Don't clobber a key the user just typed this session.
+        if (!cache.has(name)) cache.set(name, stored);
+        if (legacy) clearLegacyPref(name);
+      } else if (legacy) {
+        await writeToStore(name, legacy);
+        if (!cache.has(name)) cache.set(name, legacy);
+        clearLegacyPref(name);
+      }
     }
-    clearLegacyPref(name);
+    loaded = true;
+    problem = undefined;
+  } catch (error) {
+    problem = new KeyStoreError(error);
+    log(
+      `Key store unavailable: ${problem.cause.name}: ${problem.cause.message}`,
+    );
+    noticeOnce();
   }
 }
 
-/** True while an old plaintext key still waits to be moved into the store. */
-export function hasLegacyKeyPref(name: KeyName): boolean {
-  return Boolean((getPref(name) as string | undefined)?.trim());
-}
-
+/**
+ * The key in use right now: this session's cache, else the store's value,
+ * else a not-yet-migrated plaintext preference. Synchronous.
+ */
 export function getApiKey(name: KeyName): string {
-  try {
-    return (find(name)?.password as string | undefined)?.trim() ?? "";
-  } catch (error) {
-    throw asKeyStoreError(error);
-  }
+  return cache.get(name) ?? legacyPref(name);
 }
 
-export async function setApiKey(name: KeyName, value: string): Promise<void> {
+/**
+ * Save a key. It is cached for the session first, so it works even if the
+ * store fails; `persisted` says whether the login manager has it.
+ */
+export async function setApiKey(
+  name: KeyName,
+  value: string,
+): Promise<{ persisted: boolean; error?: KeyStoreError }> {
+  const trimmed = value.trim();
+  if (trimmed) cache.set(name, trimmed);
+  else cache.delete(name);
   try {
-    await writeLogin(name, value.trim());
+    await writeToStore(name, trimmed);
+    clearLegacyPref(name);
+    problem = undefined;
+    return { persisted: true };
   } catch (error) {
-    throw asKeyStoreError(error);
+    problem = new KeyStoreError(error);
+    log(
+      `Key store unavailable: ${problem.cause.name}: ${problem.cause.message}`,
+    );
+    noticeOnce();
+    // An empty value must also stop an unmigrated old key from being used.
+    if (!trimmed) cache.set(name, "");
+    return { persisted: false, error: problem };
   }
-  clearLegacyPref(name);
 }

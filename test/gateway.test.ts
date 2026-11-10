@@ -1,7 +1,6 @@
 import { assert } from "chai";
 import { config } from "../package.json";
 import { setPref, clearPref } from "../src/utils/prefs";
-import { setApiKey } from "../src/utils/keystore";
 
 // Drives the plugin's own bundle (Zotero[instance].api, exposed in test builds
 // only) against test/support/stubServer.ts, so Zotero.HTTP.request behaves as
@@ -35,13 +34,13 @@ describe("CAIL Gateway client in real Zotero", function () {
   before(async function () {
     instance().data.testBaseUrl = `${root()}/v1`;
     setPref("aiProvider", "cail");
-    await setApiKey("cailApiKey", "sk-cail-integration-test");
+    await api().setApiKey("cailApiKey", "sk-cail-integration-test");
   });
 
   after(async function () {
     delete instance().data.testBaseUrl;
     clearPref("aiProvider");
-    await setApiKey("cailApiKey", "");
+    await api().setApiKey("cailApiKey", "");
   });
 
   it("makes exactly one request for a 503 without x-should-retry", async function () {

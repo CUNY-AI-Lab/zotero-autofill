@@ -1,6 +1,7 @@
 import { config } from "../package.json";
 import { ColumnOptions, DialogHelper } from "zotero-plugin-toolkit";
 import hooks from "./hooks";
+import { setApiKey } from "./utils/keystore";
 import {
   callOpenRouter,
   ensureCatalogAndModel,
@@ -51,6 +52,7 @@ class Addon {
             ensureCatalogAndModel,
             parseBibliographyWithLLM,
             resetCatalogCache,
+            setApiKey,
           }
         : {};
   }

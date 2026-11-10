@@ -7,7 +7,9 @@ import {
 } from "./llmClient";
 import { getPref, setPref } from "../utils/prefs";
 import {
+  KEYSTORE_UNAVAILABLE_MESSAGE,
   getApiKey,
+  getKeyStoreProblem,
   migrateKeysFromPrefs,
   setApiKey,
   type KeyName,
@@ -62,19 +64,16 @@ async function wireKeyField(doc: Document, field: string, name: KeyName) {
   const input = doc.getElementById(id(field)) as HTMLInputElement | null;
   const status = doc.getElementById("metadata-key-status");
   if (!input) return;
-  const fail = (error: unknown) => {
-    if (status) status.textContent = String((error as Error).message || error);
+  const show = (message: string) => {
+    if (status) status.textContent = message;
   };
-  try {
-    await migrateKeysFromPrefs();
-    input.value = getApiKey(name);
-  } catch (error) {
-    fail(error);
-  }
+  await migrateKeysFromPrefs();
+  input.value = getApiKey(name);
+  if (getKeyStoreProblem()) show(KEYSTORE_UNAVAILABLE_MESSAGE);
   input.addEventListener("change", () => {
-    setApiKey(name, input.value).then(() => {
-      if (status) status.textContent = "";
-    }, fail);
+    setApiKey(name, input.value).then((result) =>
+      show(result.persisted ? "" : KEYSTORE_UNAVAILABLE_MESSAGE),
+    );
   });
 }
 
