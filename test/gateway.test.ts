@@ -1,7 +1,6 @@
 import { assert } from "chai";
 import { config } from "../package.json";
 import { setPref, clearPref } from "../src/utils/prefs";
-import { setApiKey } from "../src/utils/keystore";
 
 // Drives the plugin's own bundle (Zotero[instance].api, exposed in test builds
 // only) against test/support/stubServer.ts, so Zotero.HTTP.request behaves as
@@ -35,13 +34,13 @@ describe("CAIL Gateway client in real Zotero", function () {
   before(async function () {
     instance().data.testBaseUrl = `${root()}/v1`;
     setPref("aiProvider", "cail");
-    await setApiKey("cailApiKey", "sk-cail-integration-test");
+    await api().setApiKey("cailApiKey", "sk-cail-integration-test");
   });
 
   after(async function () {
     delete instance().data.testBaseUrl;
     clearPref("aiProvider");
-    await setApiKey("cailApiKey", "");
+    await api().setApiKey("cailApiKey", "");
   });
 
   it("makes exactly one request for a 503 without x-should-retry", async function () {
@@ -57,6 +56,24 @@ describe("CAIL Gateway client in real Zotero", function () {
     ]);
     await api().callOpenRouter(msgs);
     assert.lengthOf(await stubLog(), 1);
+  });
+
+  it("makes exactly one request for a 429 or 503 with Retry-After but no x-should-retry", async function () {
+    // Zotero 7-10's own HTTP layer would sleep Retry-After and resend
+    // (unbounded) unless the request opts out with noRetryOnThrottle.
+    for (const status of [429, 503]) {
+      await script([
+        {
+          status,
+          headers: { "Retry-After": "1" },
+          body: { error: { code: "quota_exceeded", message: "Over quota" } },
+        },
+        ok,
+      ]);
+      const result = await api().callOpenRouter(msgs);
+      assert.isFalse(result.success, String(status));
+      assert.lengthOf(await stubLog(), 1, String(status));
+    }
   });
 
   it("retries once, after Retry-After, when x-should-retry is true", async function () {

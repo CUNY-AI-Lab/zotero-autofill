@@ -4,7 +4,11 @@
  */
 
 import { getPref, setPref } from "../utils/prefs";
-import { hasLegacyKeyPref, migrateKeysFromPrefs } from "../utils/keystore";
+import {
+  KEYSTORE_UNAVAILABLE_MESSAGE,
+  getKeyStoreProblem,
+  migrateKeysFromPrefs,
+} from "../utils/keystore";
 import {
   getCatalogModels,
   hasLiveCatalog,
@@ -12,7 +16,13 @@ import {
   refreshCatalog,
 } from "./catalog";
 
-export { getCatalogModels, parseCatalog, resetCatalogCache } from "./catalog";
+export {
+  getCatalogModels,
+  getMenuModels,
+  parseCatalog,
+  resetCatalogCache,
+} from "./catalog";
+export { resetKeyStoreState } from "../utils/keystore";
 import {
   getChatCompletionsUrl,
   getConfiguredProvider,
@@ -285,16 +295,7 @@ export async function ensureCatalogAndModel(): Promise<void> {
  * Check if LLM features are available (API key is set)
  */
 export function isLLMAvailable(): boolean {
-  try {
-    return (
-      getProviderKey().length > 0 ||
-      // Not yet migrated; callOpenRouter moves it into the key store first.
-      hasLegacyKeyPref(getProviderConfig().keyPreference)
-    );
-  } catch {
-    // Key store unavailable: report available so the call surfaces its error.
-    return true;
-  }
+  return getProviderKey().length > 0;
 }
 
 // ==================== Core LLM Functions ====================
@@ -317,17 +318,14 @@ export async function callOpenRouter(
   },
 ): Promise<LLMResponse> {
   const provider = getConfiguredProvider();
-  let apiKey: string;
-  try {
-    await migrateKeysFromPrefs();
-    apiKey = getProviderKey(provider);
-  } catch (error: any) {
-    return { success: false, error: error.message };
-  }
+  await migrateKeysFromPrefs();
+  const apiKey = getProviderKey(provider);
   if (!apiKey) {
     return {
       success: false,
-      error: getMissingProviderKeyMessage(provider),
+      error: getKeyStoreProblem()
+        ? `${getMissingProviderKeyMessage(provider)} ${KEYSTORE_UNAVAILABLE_MESSAGE}`
+        : getMissingProviderKeyMessage(provider),
     };
   }
 
@@ -377,14 +375,18 @@ export async function callOpenRouter(
         body: JSON.stringify(payload),
         timeout,
         responseType: "json",
-        // Zotero.HTTP.request retries 5xx on its own by default; the Gateway
-        // decides retries itself.
-        ...(isCail ? { errorDelayMax: 0 } : {}),
+        // Zotero.HTTP.request otherwise retries on its own: 5xx with backoff
+        // (errorDelayMax) and, in Zotero 7-10, 429/503 after any Retry-After
+        // header even when errorDelayMax is 0 (noRetryOnThrottle). The retry
+        // policy above is the only one.
+        errorDelayMax: 0,
+        noRetryOnThrottle: true,
         cancellerReceiver: (fn: () => void) => {
           cancel = fn;
-          signal?.addEventListener("abort", onAbort, { once: true });
+          if (signal?.aborted) fn();
+          else signal?.addEventListener("abort", onAbort, { once: true });
         },
-      });
+      } as any);
 
       const data = response.response as any;
 
@@ -491,6 +493,7 @@ export async function llmCleanupQuery(
   title: string,
   author: string,
 ): Promise<CleanedQuery | null> {
+  await migrateKeysFromPrefs();
   if (!isLLMAvailable()) {
     return null;
   }
@@ -545,6 +548,7 @@ export async function llmDisambiguate(
     isbn?: string;
   }>,
 ): Promise<DisambiguationResult | null> {
+  await migrateKeysFromPrefs();
   if (!isLLMAvailable() || candidates.length === 0) {
     return null;
   }
@@ -785,9 +789,12 @@ export async function parseBibliographyWithLLM(
       .map((entry) => entry.original),
     entries: mapped,
   });
+  await migrateKeysFromPrefs();
   if (!isLLMAvailable()) {
     mapped.forEach((entry) => {
-      entry.error = getMissingProviderKeyMessage();
+      entry.error = getKeyStoreProblem()
+        ? `${getMissingProviderKeyMessage()} ${KEYSTORE_UNAVAILABLE_MESSAGE}`
+        : getMissingProviderKeyMessage();
     });
     return finish();
   }

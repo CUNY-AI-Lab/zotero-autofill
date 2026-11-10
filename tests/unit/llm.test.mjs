@@ -52,6 +52,7 @@ test("CUNY requests use the gateway endpoint and app header", async () => {
 
 test("missing CUNY key returns an actionable error", async () => {
   globalThis.__fakeLogins.length = 0;
+  llm.resetKeyStoreState();
   cailKey = "";
   const result = await llm.callOpenRouter([]);
   assert.equal(result.success, false);
@@ -110,18 +111,27 @@ test("a legacy proprietary preference falls back to the open-weight default", ()
   selectedModel = "deepseek/deepseek-v4.1-flash";
 });
 
-test("a locked key store becomes an AI error, not a thrown exception", async () => {
-  const original = globalThis.Services.logins.findLogins;
-  globalThis.Services.logins.findLogins = () => {
+test("an unusable key store does not block a key from the old preference, and says why when no key exists", async () => {
+  const original = globalThis.Services.logins.searchLoginsAsync;
+  globalThis.Services.logins.searchLoginsAsync = async () => {
     throw new Error("locked");
   };
+  llm.resetKeyStoreState();
   try {
-    assert.equal(llm.isLLMAvailable(), true);
+    response = { ok: true };
+    const worked = await llm.callOpenRouter([]);
+    assert.equal(worked.success, true, "pref key stays usable");
+    globalThis.__fakeLogins.length = 0;
+    llm.resetKeyStoreState();
+    cailKey = "";
     const result = await llm.callOpenRouter([]);
     assert.equal(result.success, false);
+    assert.match(result.error, /API key is missing/);
     assert.match(result.error, /saved-password store/);
   } finally {
-    globalThis.Services.logins.findLogins = original;
+    cailKey = "cail-test-key";
+    globalThis.Services.logins.searchLoginsAsync = original;
+    llm.resetKeyStoreState();
   }
 });
 

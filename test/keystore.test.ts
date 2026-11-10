@@ -5,11 +5,22 @@ import {
   KEYSTORE_REALM,
   getApiKey,
   migrateKeysFromPrefs,
+  resetKeyStoreState,
   setApiKey,
 } from "../src/utils/keystore";
 
-const stored = () =>
-  Services.logins.findLogins(KEYSTORE_ORIGIN, null, KEYSTORE_REALM);
+// Same lookup the plugin uses, spelled out so the test doesn't share its bugs.
+const stored = async (): Promise<any[]> => {
+  const logins: any = Services.logins;
+  return Array.from(
+    typeof logins.searchLoginsAsync === "function"
+      ? await logins.searchLoginsAsync({
+          origin: KEYSTORE_ORIGIN,
+          httpRealm: KEYSTORE_REALM,
+        })
+      : logins.findLogins(KEYSTORE_ORIGIN, null, KEYSTORE_REALM),
+  );
+};
 
 describe("API key storage in the Firefox login manager", function () {
   afterEach(async function () {
@@ -23,7 +34,7 @@ describe("API key storage in the Firefox login manager", function () {
     await migrateKeysFromPrefs();
     assert.equal(getApiKey("cailApiKey"), "sk-cail-dummy-migration-key");
     assert.equal(getPref("cailApiKey"), "", "preference was cleared");
-    const logins = stored();
+    const logins = await stored();
     assert.lengthOf(logins, 1);
     assert.equal(logins[0].username, "cailApiKey");
     assert.equal(logins[0].password, "sk-cail-dummy-migration-key");
@@ -34,10 +45,10 @@ describe("API key storage in the Firefox login manager", function () {
     await setApiKey("openrouterApiKey", "dummy-1");
     await setApiKey("openrouterApiKey", "dummy-2");
     assert.equal(getApiKey("openrouterApiKey"), "dummy-2");
-    assert.lengthOf(stored(), 1);
+    assert.lengthOf(await stored(), 1);
     assert.equal(getPref("openrouterApiKey"), "");
     await setApiKey("openrouterApiKey", "");
     assert.equal(getApiKey("openrouterApiKey"), "");
-    assert.lengthOf(stored(), 0);
+    assert.lengthOf(await stored(), 0);
   });
 });

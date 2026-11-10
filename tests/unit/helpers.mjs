@@ -6,16 +6,26 @@ import { join } from "node:path";
 // API keys live in the login manager; give unit tests an in-memory one.
 const fakeLogins = [];
 globalThis.__fakeLogins = fakeLogins;
+const replace = (old, login) =>
+  fakeLogins.splice(fakeLogins.indexOf(old), 1, login);
+const remove = (login) => fakeLogins.splice(fakeLogins.indexOf(login), 1);
+// Modern Gecko: async only. keystore.test.mjs also exercises the old sync-only API.
 globalThis.Services ??= {
   logins: {
-    findLogins: () => [...fakeLogins],
+    initializationPromise: Promise.resolve(),
+    searchLoginsAsync: async () => [...fakeLogins],
     addLoginAsync: async (login) => {
       fakeLogins.push(login);
     },
-    modifyLogin: (old, login) =>
-      fakeLogins.splice(fakeLogins.indexOf(old), 1, login),
-    removeLogin: (login) => fakeLogins.splice(fakeLogins.indexOf(login), 1),
+    modifyLoginAsync: async (old, login) => replace(old, login),
+    removeLoginAsync: async (login) => remove(login),
   },
+};
+globalThis.__legacySyncLogins = {
+  findLogins: () => [...fakeLogins],
+  addLogin: (login) => fakeLogins.push(login),
+  modifyLogin: replace,
+  removeLogin: remove,
 };
 globalThis.Ci ??= { nsILoginInfo: {} };
 globalThis.Components ??= {

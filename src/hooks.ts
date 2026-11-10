@@ -22,7 +22,9 @@ async function onStartup() {
   initLocale();
 
   // Move any API key saved in plaintext preferences into the login manager.
-  await migrateKeysFromPrefs().catch((error) => ztoolkit.log(error));
+  // Not awaited: a slow store (e.g. a primary-password prompt) must not hold
+  // up menus; everything that needs a key awaits the same migration.
+  void migrateKeysFromPrefs();
 
   // Register preference pane
   registerPrefs();
@@ -209,7 +211,9 @@ async function onItemsAdded(ids: number[]) {
 async function onPrefsEvent(type: string, data: { [key: string]: any }) {
   switch (type) {
     case "load":
-      registerPrefsScripts(data.window);
+      addon.data.prefsPaneReady = registerPrefsScripts(data.window).catch(
+        (error) => ztoolkit.log(`Settings pane setup failed: ${error}`),
+      );
       break;
     default:
       return;

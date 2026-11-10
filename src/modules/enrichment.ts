@@ -5,6 +5,8 @@
  */
 
 import { getPref } from "../utils/prefs";
+import { getApiKey, migrateKeysFromPrefs } from "../utils/keystore";
+import { lookupUrl } from "../utils/testHooks";
 import { isLLMAvailable, llmCleanupQuery, llmDisambiguate } from "./llmClient";
 import { openEnrichmentReview } from "./enrichmentReview";
 
@@ -38,6 +40,13 @@ export interface EnrichmentResult {
   abstractNote?: string;
 }
 
+/** What one catalog returned; `error` says why it could not be searched. */
+export interface SourceSearch {
+  candidates: APICandidate[];
+  bestResult: EnrichmentResult | null;
+  error?: string;
+}
+
 export interface APICandidate {
   title?: string;
   author?: string;
@@ -63,8 +72,12 @@ export interface EnrichmentProposal {
 export interface EnrichmentStats {
   found: number;
   notFound: number;
+  /** Items whose lookup could not be completed (catalog failures, deadline). */
+  failed: number;
   preIsbn: number;
   skipped: number;
+  /** Items whose earlier lookup was still running. */
+  alreadyRunning: number;
   proposals: EnrichmentProposal[];
   errors: string[];
 }
@@ -90,6 +103,54 @@ export function isEnrichableItem(item: Zotero.Item): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Replaceable in tests so pacing delays do not take real time. */
+export const enrichRuntime = { sleep };
+
+const POLITE_USER_AGENT =
+  "Zotero Metadata Assistant/1.0 (https://github.com/CUNY-AI-Lab/zotero-autofill)";
+
+/**
+ * GET a catalog URL. Every lookup has a 10 s timeout and no automatic retry:
+ * `errorDelayMax: 0` stops Zotero.HTTP's own 5xx backoff (up to an hour in
+ * Zotero 7-10) and `noRetryOnThrottle` stops it from sleeping on a 429/503
+ * `Retry-After` and trying again, which `errorDelayMax: 0` alone does not.
+ */
+function lookupRequest(url: string, headers?: Record<string, string>) {
+  return Zotero.HTTP.request("GET", lookupUrl(url), {
+    ...(headers ? { headers } : {}),
+    timeout: 10000,
+    errorDelayMax: 0,
+    noRetryOnThrottle: true,
+    responseType: "json",
+  } as any);
+}
+
+/** A catalog answered "no such record" (as opposed to failing). */
+function isNotFound(error: unknown): boolean {
+  const e = error as any;
+  return (e?.status ?? e?.xmlhttp?.status) === 404;
+}
+
+/** What each catalog did during one lookup. */
+export interface SourceReport {
+  name: string;
+  found: number;
+  error?: string;
+}
+
+/**
+ * A lookup that found nothing while at least one catalog failed: the item is
+ * not "not found", it could not be checked.
+ */
+export class LookupFailedError extends Error {
+  sources: SourceReport[];
+  constructor(sources: SourceReport[]) {
+    super(describeSearchFailures(sources) || "The lookup failed.");
+    this.name = "LookupFailedError";
+    this.sources = sources;
+  }
 }
 
 /**
@@ -186,11 +247,11 @@ async function resolveOpenLibraryAuthors(
     const key = String(author?.key || author?.author?.key || "");
     if (!/^\/authors\/OL\d+A$/.test(key)) continue;
     try {
-      await sleep(Math.max(1100, Number(getPref("apiDelayMs")) || 1100));
-      const response = await Zotero.HTTP.request(
-        "GET",
+      await enrichRuntime.sleep(
+        Math.max(1100, Number(getPref("apiDelayMs")) || 1100),
+      );
+      const response = await lookupRequest(
         `https://openlibrary.org${key}.json`,
-        { timeout: 10000, responseType: "json" },
       );
       const name = String((response.response as any)?.name || "").trim();
       if (name) resolved.push({ name });
@@ -209,12 +270,17 @@ async function fetchOpenLibraryEdition(
 ): Promise<EnrichmentResult | null> {
   const url = `https://openlibrary.org/isbn/${isbn}.json`;
 
+  let response: any;
   try {
-    const response = await Zotero.HTTP.request("GET", url, {
-      timeout: 10000,
-      responseType: "json",
-    });
-
+    response = await lookupRequest(url);
+  } catch (error) {
+    ztoolkit.log(`Open Library edition fetch error for ISBN ${isbn}: ${error}`);
+    if (isNotFound(error)) return null;
+    throw new LookupFailedError([
+      { name: "Open Library", found: 0, error: describeSourceFailure(error) },
+    ]);
+  }
+  try {
     const data = response.response as any;
     if (!data || typeof data.title !== "string" || !data.title.trim())
       return null;
@@ -293,9 +359,30 @@ async function fetchOpenLibraryEdition(
 
     return Object.keys(result).length > 0 ? result : null;
   } catch (error) {
-    ztoolkit.log(`Open Library edition fetch error for ISBN ${isbn}: ${error}`);
+    ztoolkit.log(`Open Library edition parse error for ISBN ${isbn}: ${error}`);
     return null;
   }
+}
+
+/** Short reason a catalog request failed, for the user. Never includes the URL. */
+export function describeSourceFailure(error: unknown): string {
+  const e = error as any;
+  const raw = e?.status ?? e?.xmlhttp?.status;
+  const status = typeof raw === "number" && raw > 0 ? raw : undefined;
+  const message = String(e?.message ?? error);
+  if (
+    status === 429 ||
+    (status === undefined &&
+      /status code 429\b|rate limit|too many requests/i.test(message))
+  )
+    return "refused the request (rate limit)";
+  if (status !== undefined && status >= 500)
+    return `had a server error (${status})`;
+  if (status !== undefined && status >= 400)
+    return `refused the request (HTTP ${status})`;
+  if (/timeout|timed out/i.test(message)) return "timed out";
+  if (/offline/i.test(message)) return "could not be reached (offline)";
+  return "could not be reached";
 }
 
 /**
@@ -306,10 +393,7 @@ export async function searchOpenLibrary(
   title: string,
   author: string,
   year: number | null,
-): Promise<{
-  candidates: APICandidate[];
-  bestResult: EnrichmentResult | null;
-}> {
+): Promise<SourceSearch> {
   const params = new URLSearchParams();
   params.set("title", title);
   if (author) params.set("author", author);
@@ -323,14 +407,11 @@ export async function searchOpenLibrary(
   const url = `https://openlibrary.org/search.json?${params.toString()}`;
 
   try {
-    const response = await Zotero.HTTP.request("GET", url, {
-      timeout: 10000,
-      responseType: "json",
-    });
+    const response = await lookupRequest(url);
 
     const data = response.response as any;
 
-    if (data.numFound > 0 && data.docs && data.docs.length > 0) {
+    if (data?.numFound > 0 && data.docs && data.docs.length > 0) {
       const candidates: APICandidate[] = [];
 
       for (const doc of data.docs.slice(0, 5)) {
@@ -342,12 +423,14 @@ export async function searchOpenLibrary(
           const key = edition.key?.replace(/^\/books\//, "");
           if (!key || !/^OL\d+M$/.test(key)) continue;
           const editionURL = `https://openlibrary.org/books/${key}.json`;
-          await sleep(1100);
-          const detail = await Zotero.HTTP.request("GET", editionURL, {
-            timeout: 10000,
-            responseType: "json",
-          });
-          const data = detail.response as any;
+          await enrichRuntime.sleep(1100);
+          let data: any = {};
+          try {
+            data = (await lookupRequest(editionURL)).response || {};
+          } catch (error) {
+            // Keep what the search itself said about this edition.
+            ztoolkit.log(`Open Library edition ${key} error: ${error}`);
+          }
           const authors = (doc.author_name || []).map((name: string) => ({
             name,
           }));
@@ -356,10 +439,12 @@ export async function searchOpenLibrary(
             author: doc.author_name?.[0],
             authors,
             ISBN: data.isbn_13?.[0] || data.isbn_10?.[0] || isbn,
-            publisher: data.publishers?.[0],
+            publisher: data.publishers?.[0] || edition.publisher?.[0],
             place: data.publish_places?.[0],
             numPages: data.number_of_pages,
-            date: data.publish_date?.match(/\d{4}/)?.[0],
+            date: (data.publish_date || edition.publish_date?.[0])?.match(
+              /\d{4}/,
+            )?.[0],
             OCLC: data.oclc_numbers?.[0],
             LCCN: data.lccn?.[0],
             source: editionURL,
@@ -382,6 +467,11 @@ export async function searchOpenLibrary(
     }
   } catch (error) {
     ztoolkit.log(`Open Library search error: ${error}`);
+    return {
+      candidates: [],
+      bestResult: null,
+      error: describeSourceFailure(error),
+    };
   }
 
   return { candidates: [], bestResult: null };
@@ -454,26 +544,26 @@ function parseGoogleBooksVolume(volumeInfo: any): EnrichmentResult {
 export async function searchGoogleBooks(
   title: string,
   author: string,
-): Promise<{
-  candidates: APICandidate[];
-  bestResult: EnrichmentResult | null;
-}> {
+): Promise<SourceSearch> {
   const queryParts: string[] = [];
   if (title) queryParts.push(`intitle:${title}`);
   if (author) queryParts.push(`inauthor:${author}`);
 
   const query = queryParts.join(" ");
   const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=5`;
+  // The user's own key, if any, goes in a header (never the URL, which
+  // Zotero writes to its debug log) and only to googleapis.com.
+  const key = getApiKey("googleBooksApiKey");
 
   try {
-    const response = await Zotero.HTTP.request("GET", url, {
-      timeout: 10000,
-      responseType: "json",
-    });
+    const response = await lookupRequest(
+      url,
+      key ? { "X-Goog-Api-Key": key } : undefined,
+    );
 
     const data = response.response as any;
 
-    if (data.totalItems > 0 && data.items && data.items.length > 0) {
+    if (data?.totalItems > 0 && data.items && data.items.length > 0) {
       const candidates: APICandidate[] = [];
 
       for (const item of data.items.slice(0, 5)) {
@@ -501,6 +591,10 @@ export async function searchGoogleBooks(
     }
   } catch (error) {
     ztoolkit.log(`Google Books search error: ${error}`);
+    let reason = describeSourceFailure(error);
+    if (!key && reason.includes("rate limit"))
+      reason = `${reason.slice(0, -1)}; the shared quota is used up, add your own Google Books API key in Settings)`;
+    return { candidates: [], bestResult: null, error: reason };
   }
 
   return { candidates: [], bestResult: null };
@@ -526,7 +620,18 @@ function cleanAbstract(value: unknown): string | undefined {
   return text.length > 500 ? `${text.substring(0, 497)}...` : text;
 }
 
+const CROSSREF_BOOK_TYPES = [
+  "book",
+  "monograph",
+  "edited-book",
+  "reference-book",
+];
+function isBookWork(work: any): boolean {
+  return CROSSREF_BOOK_TYPES.includes(work?.type);
+}
+
 function parseCrossrefWork(work: any): EnrichmentResult {
+  // Editors are not proposed as authors (the review would add them as such).
   const authors = Array.isArray(work?.author)
     ? work.author
         .map((author: any): EnrichmentAuthor => {
@@ -539,8 +644,22 @@ function parseCrossrefWork(work: any): EnrichmentResult {
         .filter((author: EnrichmentAuthor) => Boolean(authorLabel(author)))
     : [];
   const doi = typeof work?.DOI === "string" ? work.DOI : undefined;
+  const isbns: string[] = Array.isArray(work?.ISBN)
+    ? work.ISBN.map((v: unknown) => String(v).replace(/[^0-9Xx]/g, ""))
+    : [];
+  const isbn = isbns.find((v) => /^\d{13}$/.test(v)) || isbns[0];
+  const subtitle = Array.isArray(work?.subtitle) ? work.subtitle[0] : undefined;
+  const mainTitle = Array.isArray(work?.title) ? work.title[0] : undefined;
   const result: EnrichmentResult = {
-    title: Array.isArray(work?.title) ? work.title[0] : undefined,
+    title:
+      isBookWork(work) && mainTitle && subtitle
+        ? `${mainTitle}: ${subtitle}`
+        : mainTitle,
+    ISBN: isbn || undefined,
+    place:
+      typeof work?.["publisher-location"] === "string"
+        ? work["publisher-location"]
+        : undefined,
     source:
       typeof work?.URL === "string"
         ? work.URL
@@ -574,15 +693,17 @@ async function fetchCrossrefWork(
     .replace(/^doi:/i, "");
   if (!normalized) return null;
   const url = `https://api.crossref.org/works/${encodeURIComponent(normalized)}`;
+  let response: any;
   try {
-    const response = await Zotero.HTTP.request("GET", url, {
-      headers: {
-        "User-Agent":
-          "Zotero Metadata Assistant/1.0 (https://github.com/CUNY-AI-Lab/zotero-autofill)",
-      },
-      timeout: 10000,
-      responseType: "json",
-    });
+    response = await lookupRequest(url, { "User-Agent": POLITE_USER_AGENT });
+  } catch (error) {
+    ztoolkit.log(`Crossref DOI lookup error for ${normalized}: ${error}`);
+    if (isNotFound(error)) return null;
+    throw new LookupFailedError([
+      { name: "Crossref", found: 0, error: describeSourceFailure(error) },
+    ]);
+  }
+  try {
     const result = parseCrossrefWork((response.response as any)?.message);
     if (result.DOI && result.title) {
       const expandedTitle = await fetchSemanticScholarTitle(
@@ -612,15 +733,10 @@ async function fetchSemanticScholarTitle(
 ): Promise<string | undefined> {
   const url = `https://api.semanticscholar.org/graph/v1/paper/DOI:${encodeURIComponent(doi)}?fields=title`;
   for (const delay of [0, 1200]) {
-    if (delay) await sleep(delay);
+    if (delay) await enrichRuntime.sleep(delay);
     try {
-      const response = await Zotero.HTTP.request("GET", url, {
-        headers: {
-          "User-Agent":
-            "Zotero Metadata Assistant/1.0 (https://github.com/CUNY-AI-Lab/zotero-autofill)",
-        },
-        timeout: 10000,
-        responseType: "json",
+      const response = await lookupRequest(url, {
+        "User-Agent": POLITE_USER_AGENT,
       });
       const title = (response.response as any)?.title;
       if (typeof title === "string" && title.trim()) return title.trim();
@@ -636,13 +752,8 @@ async function fetchSemanticScholarTitle(
   if (!query) return undefined;
   const searchURL = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=10&fields=title,externalIds`;
   try {
-    const response = await Zotero.HTTP.request("GET", searchURL, {
-      headers: {
-        "User-Agent":
-          "Zotero Metadata Assistant/1.0 (https://github.com/CUNY-AI-Lab/zotero-autofill)",
-      },
-      timeout: 10000,
-      responseType: "json",
+    const response = await lookupRequest(searchURL, {
+      "User-Agent": POLITE_USER_AGENT,
     });
     const normalizedDOI = doi.trim().toLowerCase();
     const match = ((response.response as any)?.data || []).find(
@@ -664,26 +775,25 @@ async function fetchSemanticScholarTitle(
 export async function searchCrossref(
   title: string,
   author: string,
-  year: number | null,
-): Promise<{
-  candidates: APICandidate[];
-  bestResult: EnrichmentResult | null;
-}> {
+  _year: number | null,
+  options: { books?: boolean } = {},
+): Promise<SourceSearch> {
   const params = new URLSearchParams({
     "query.bibliographic": [title, author].filter(Boolean).join(" "),
     rows: "5",
     select:
-      "DOI,URL,title,author,publisher,container-title,volume,issue,page,published-print,published-online,created,abstract",
+      "DOI,URL,title,author,publisher,container-title,volume,issue,page,published-print,published-online,created,abstract" +
+      (options.books ? ",subtitle,ISBN,publisher-location,type,issued" : ""),
   });
+  if (options.books)
+    params.set(
+      "filter",
+      CROSSREF_BOOK_TYPES.map((type) => `type:${type}`).join(","),
+    );
   const url = `https://api.crossref.org/works?${params.toString()}`;
   try {
-    const response = await Zotero.HTTP.request("GET", url, {
-      headers: {
-        "User-Agent":
-          "Zotero Metadata Assistant/1.0 (https://github.com/CUNY-AI-Lab/zotero-autofill)",
-      },
-      timeout: 10000,
-      responseType: "json",
+    const response = await lookupRequest(url, {
+      "User-Agent": POLITE_USER_AGENT,
     });
     const items = (response.response as any)?.message?.items;
     const candidates = Array.isArray(items)
@@ -691,10 +801,11 @@ export async function searchCrossref(
           .map((work: any) => {
             const result = parseCrossrefWork(work);
             return {
-              title: Array.isArray(work?.title) ? work.title[0] : undefined,
+              title: result.title,
               author: result.author,
               year: result.date,
               publisher: result.publisher,
+              isbn: result.ISBN,
               result,
             } satisfies APICandidate;
           })
@@ -709,7 +820,11 @@ export async function searchCrossref(
     };
   } catch (error) {
     ztoolkit.log(`Crossref search error: ${error}`);
-    return { candidates: [], bestResult: null };
+    return {
+      candidates: [],
+      bestResult: null,
+      error: describeSourceFailure(error),
+    };
   }
 }
 
@@ -722,6 +837,37 @@ function normalize(value: string): string {
     .toLocaleLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
+}
+
+/** "Main title: subtitle" split on the first colon. */
+function splitTitle(title: string): { main: string; sub: string } {
+  const [main, ...rest] = title.split(/\s*:\s+/);
+  return { main: normalize(main), sub: normalize(rest.join(" ")) };
+}
+
+/**
+ * Titles match when identical, or when they differ only by a subtitle that one
+ * side lacks (catalogues add subtitles; Zotero records often omit them). Two
+ * different subtitles are different books.
+ */
+export function titlesMatch(a: string, b: string): boolean {
+  if (normalize(a) === normalize(b)) return true;
+  const x = splitTitle(a);
+  const y = splitTitle(b);
+  return Boolean(x.main) && x.main === y.main && (!x.sub || !y.sub);
+}
+
+/**
+ * Surname-based and case-insensitive: "Marazzi" and "Martino Marazzi" both
+ * match a catalogue's "MARAZZI" or "Marazzi, Martino".
+ */
+export function authorMatches(candidateAuthor: string, author: string) {
+  const wanted = normalize(author);
+  if (!wanted) return true;
+  const have = ` ${normalize(candidateAuthor)} `;
+  if (have.includes(` ${wanted} `)) return true;
+  const surname = wanted.split(" ").pop();
+  return Boolean(surname) && have.includes(` ${surname} `);
 }
 
 export async function selectBestCandidate(
@@ -737,12 +883,11 @@ export async function selectBestCandidate(
   const normalizedTitle = normalize(title);
   const identityMatches = candidates.filter(
     (c) =>
-      (normalize(c.title || "") === normalizedTitle ||
+      (titlesMatch(c.title || "", title) ||
         (options.allowArticleYearMismatch &&
           (normalize(c.title || "").includes(normalizedTitle) ||
             normalizedTitle.includes(normalize(c.title || ""))))) &&
-      (!author ||
-        ` ${normalize(c.author || "")} `.includes(` ${normalize(author)} `)),
+      authorMatches(c.author || "", author),
   );
   const suitable = identityMatches.filter(
     (c) => year === null || c.year === String(year),
@@ -777,10 +922,227 @@ export async function selectBestCandidate(
   return selected ? addCandidateAuthor(selected) : null;
 }
 
+/** Normalised main title + first-author surname: the identity of a work. */
+function workKey(c: APICandidate): string {
+  const surname = normalize(c.author || "")
+    .split(" ")
+    .filter((part) => part.length > 1 || /\d/.test(part))
+    .pop();
+  return `${splitTitle(c.title || "").main}|${surname || ""}`;
+}
+
+/**
+ * Add `incoming` to `merged`, folding duplicates from different catalogs into
+ * one record: same ISBN, or (when either side has no ISBN) the same main
+ * title, first-author surname and year. Fields missing from the earlier record
+ * are filled from the later one; nothing already present is overwritten.
+ * Records with different ISBNs, or different or unknown years without an ISBN
+ * to tie them, are different editions and stay separate.
+ */
+export function mergeCandidates(
+  merged: APICandidate[],
+  incoming: APICandidate[],
+): APICandidate[] {
+  const out = merged.map((c) => ({ ...c, result: { ...c.result } }));
+  for (const c of incoming) {
+    const isbn = c.isbn ? canonicalISBN(c.isbn) : "";
+    const twin = out.find((m) => {
+      const mi = m.isbn ? canonicalISBN(m.isbn) : "";
+      if (isbn && mi) return isbn === mi;
+      return (
+        workKey(m) === workKey(c) &&
+        Boolean(m.year) &&
+        m.year === c.year &&
+        Boolean(splitTitle(c.title || "").main)
+      );
+    });
+    if (!twin) {
+      out.push({ ...c, result: { ...c.result } });
+      continue;
+    }
+    const target = twin.result as Record<string, unknown>;
+    for (const [key, value] of Object.entries(c.result)) {
+      if (key === "candidates" || value === undefined || value === "") continue;
+      if (Array.isArray(value) && !value.length) continue;
+      const current = target[key];
+      if (
+        current === undefined ||
+        current === "" ||
+        (Array.isArray(current) && !current.length)
+      )
+        target[key] = value;
+    }
+    twin.isbn ||= c.isbn;
+    twin.year ||= c.year;
+    twin.publisher ||= c.publisher;
+    twin.author ||= c.author;
+  }
+  return out;
+}
+
+/**
+ * Open Library's free-text search (`q=`): a last resort when the structured
+ * title/author search misses (it tolerates odd catalogue records). Each work
+ * contributes its best-matching edition only, so an ISBN, publisher and year
+ * always describe the same edition.
+ */
+export async function searchOpenLibraryGeneral(
+  title: string,
+  author: string,
+): Promise<SourceSearch> {
+  const params = new URLSearchParams({
+    q: [title, author].filter(Boolean).join(" "),
+    limit: "5",
+    fields:
+      "key,title,author_name,editions,editions.key,editions.title,editions.isbn,editions.publish_date,editions.publisher",
+  });
+  try {
+    const response = await lookupRequest(
+      `https://openlibrary.org/search.json?${params.toString()}`,
+    );
+    const docs = (response.response as any)?.docs;
+    const candidates: APICandidate[] = [];
+    for (const doc of Array.isArray(docs) ? docs : []) {
+      const edition = doc?.editions?.docs?.[0] || {};
+      const editionTitle = edition.title || doc?.title;
+      if (typeof editionTitle !== "string" || !editionTitle.trim()) continue;
+      const isbns: string[] = Array.isArray(edition.isbn) ? edition.isbn : [];
+      const isbn =
+        isbns.find((v) => /^\d{13}$/.test(v)) ||
+        isbns.find((v) => /^\d{9}[\dX]$/.test(v));
+      const authors = (Array.isArray(doc.author_name) ? doc.author_name : [])
+        .filter((name: unknown) => typeof name === "string" && name.trim())
+        .map((name: string) => ({ name }));
+      const date = String(edition.publish_date?.[0] ?? "").match(/\d{4}/)?.[0];
+      const key = String(edition.key || doc.key || "");
+      const result: EnrichmentResult = {
+        title: editionTitle,
+        author: authors[0]?.name,
+        authors,
+        ISBN: isbn,
+        publisher: edition.publisher?.[0],
+        date,
+        source: /^\/(books|works)\/OL\d+[MW]$/.test(key)
+          ? `https://openlibrary.org${key}`
+          : undefined,
+      };
+      candidates.push({
+        title: editionTitle,
+        author: result.author,
+        year: date,
+        publisher: result.publisher,
+        isbn,
+        result: Object.fromEntries(
+          Object.entries(result).filter(([, v]) => v !== undefined),
+        ) as EnrichmentResult,
+      });
+    }
+    return { candidates, bestResult: candidates[0]?.result ?? null };
+  } catch (error) {
+    ztoolkit.log(`Open Library free-text search error: ${error}`);
+    return {
+      candidates: [],
+      bestResult: null,
+      error: describeSourceFailure(error),
+    };
+  }
+}
+
+function isIdentityMatch(
+  c: APICandidate,
+  title: string,
+  author: string,
+  year: number | null,
+): boolean {
+  return (
+    titlesMatch(c.title || "", title) &&
+    authorMatches(c.author || "", author) &&
+    (year === null || c.year === String(year))
+  );
+}
+
+async function runSource(
+  name: string,
+  search: () => Promise<SourceSearch>,
+): Promise<{ report: SourceReport; candidates: APICandidate[] }> {
+  let found: SourceSearch;
+  try {
+    found = await search();
+  } catch (error) {
+    found = {
+      candidates: [],
+      bestResult: null,
+      error: describeSourceFailure(error),
+    };
+  }
+  return {
+    report: { name, found: found.candidates.length, error: found.error },
+    candidates: found.candidates,
+  };
+}
+
+/**
+ * Search the book catalogs for an item without an ISBN: Open Library
+ * (structured), Crossref (book types only) and Google Books together, then
+ * Open Library's free-text search as a last resort if none of them has a
+ * title + author (+ year) match. Candidates from all of them are merged and
+ * de-duplicated before anything is chosen. One catalog failing never stops
+ * the others; each one's outcome is reported.
+ */
+export async function searchBookSources(
+  title: string,
+  author: string,
+  year: number | null,
+): Promise<{ candidates: APICandidate[]; sources: SourceReport[] }> {
+  const first = await Promise.all([
+    runSource("Open Library", () => searchOpenLibrary(title, author, year)),
+    runSource("Crossref", () =>
+      searchCrossref(title, author, year, { books: true }),
+    ),
+    runSource("Google Books", () => searchGoogleBooks(title, author)),
+  ]);
+  let merged: APICandidate[] = [];
+  for (const { candidates } of first)
+    merged = mergeCandidates(merged, candidates);
+  const sources = first.map(({ report }) => report);
+  if (!merged.some((c) => isIdentityMatch(c, title, author, year))) {
+    // Open Library again, so keep its pacing.
+    await enrichRuntime.sleep(1100);
+    const general = await runSource("Open Library", () =>
+      searchOpenLibraryGeneral(title, author),
+    );
+    merged = mergeCandidates(merged, general.candidates);
+    sources.push(general.report);
+  }
+  return { candidates: merged, sources };
+}
+
+/**
+ * "Crossref had a server error (503); Google Books refused the request (rate
+ * limit). Open Library found no match." Null when no catalog failed.
+ */
+export function describeSearchFailures(sources: SourceReport[]): string | null {
+  const failed = new Map<string, string>();
+  for (const s of sources)
+    if (s.error && !failed.has(s.name)) failed.set(s.name, s.error);
+  if (!failed.size) return null;
+  const empty = [
+    ...new Set(sources.filter((s) => !failed.has(s.name)).map((s) => s.name)),
+  ];
+  const text = [...failed]
+    .map(([name, error]) => `${name} ${error}`)
+    .join("; ");
+  return empty.length
+    ? `${text}. ${empty.join(" and ")} found no match.`
+    : `${text}.`;
+}
+
 export async function lookupItem(
   item: Zotero.Item,
 ): Promise<EnrichmentResult | null> {
   if (!isEnrichableItem(item)) return null;
+  // Keys (the AI provider's, a Google Books key) come from the login manager.
+  await migrateKeysFromPrefs();
   if (item.itemType !== "book") {
     const existingDOI = String(item.getField("DOI") || "").trim();
     if (existingDOI) return fetchCrossrefWork(existingDOI);
@@ -789,6 +1151,13 @@ export async function lookupItem(
     const author = getFirstAuthor(item);
     const year = getYearFromItem(item);
     const crossref = await searchCrossref(title, author, year);
+    const reports: SourceReport[] = [
+      {
+        name: "Crossref",
+        found: crossref.candidates.length,
+        error: crossref.error,
+      },
+    ];
     let result = await selectBestCandidate(
       title,
       author,
@@ -800,6 +1169,11 @@ export async function lookupItem(
       const cleaned = await llmCleanupQuery(title, author);
       if (cleaned && (cleaned.title !== title || cleaned.author !== author)) {
         const retry = await searchCrossref(cleaned.title, cleaned.author, year);
+        reports.push({
+          name: "Crossref",
+          found: retry.candidates.length,
+          error: retry.error,
+        });
         result = await selectBestCandidate(
           cleaned.title,
           cleaned.author,
@@ -809,6 +1183,8 @@ export async function lookupItem(
         );
       }
     }
+    if (!result && reports.some((r) => r.error))
+      throw new LookupFailedError(reports);
     return result;
   }
   const existingISBN = String(item.getField("ISBN") || "").trim();
@@ -824,28 +1200,26 @@ export async function lookupItem(
   if (!title) return null;
   const author = getFirstAuthor(item);
   const year = getYearFromItem(item);
-  const open = await searchOpenLibrary(title, author, year);
-  let result = await selectBestCandidate(title, author, year, open.candidates, {
-    returnAmbiguous: true,
-  });
+  const first = await searchBookSources(title, author, year);
+  const reports = [...first.sources];
+  let result = await selectBestCandidate(
+    title,
+    author,
+    year,
+    first.candidates,
+    { returnAmbiguous: true },
+  );
   if (result?.candidates?.length) return result;
-  if (!result) {
-    await sleep(1100);
-    const google = await searchGoogleBooks(title, author);
-    result = await selectBestCandidate(title, author, year, google.candidates, {
-      returnAmbiguous: true,
-    });
-    if (result?.candidates?.length) return result;
-  }
   if (!result && isLLMAvailable()) {
     const cleaned = await llmCleanupQuery(title, author);
     if (cleaned && (cleaned.title !== title || cleaned.author !== author)) {
-      await sleep(1100);
-      const retry = await searchOpenLibrary(
+      await enrichRuntime.sleep(1100);
+      const retry = await searchBookSources(
         cleaned.title,
         cleaned.author,
         year,
       );
+      reports.push(...retry.sources);
       result = await selectBestCandidate(
         cleaned.title,
         cleaned.author,
@@ -855,6 +1229,9 @@ export async function lookupItem(
       );
     }
   }
+  // A catalog that refused or failed is not the same as "not found".
+  if (!result && reports.some((r) => r.error))
+    throw new LookupFailedError(reports);
   if (result && year !== null && year < 1970 && getPref("enrichPreIsbn")) {
     // A historical edition must not inherit a later reprint's ISBN.
     delete result.ISBN;
@@ -870,6 +1247,27 @@ export async function enrichItem(item: Zotero.Item): Promise<boolean> {
   return true;
 }
 
+/**
+ * No lookup may stay "pending" longer than this. Individual calls have their
+ * own timeouts (10 s lookups, 30 s catalog and model calls); this bounds the
+ * sum, including anything that has no timeout of its own.
+ */
+export const LOOKUP_DEADLINE_MS = 3 * 60 * 1000;
+
+function withDeadline<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 const pending = new Set<number>();
 export async function enrichItems(
   items: Zotero.Item[],
@@ -881,12 +1279,18 @@ export async function enrichItems(
     notFound: 0,
     preIsbn: 0,
     skipped: 0,
+    alreadyRunning: 0,
+    failed: 0,
     proposals: [],
     errors: [],
   };
   for (const [index, item] of items.entries()) {
-    if (!isEnrichableItem(item) || pending.has(item.id)) {
+    if (!isEnrichableItem(item)) {
       stats.skipped++;
+      continue;
+    }
+    if (pending.has(item.id)) {
+      stats.alreadyRunning++;
       continue;
     }
     pending.add(item.id);
@@ -896,25 +1300,54 @@ export async function enrichItems(
         items.length,
         String(item.getField("title")),
       );
-      const result = await lookupItem(item);
+      const result = await withDeadline(
+        lookupItem(item),
+        LOOKUP_DEADLINE_MS,
+        `Lookup timed out after ${Math.round(LOOKUP_DEADLINE_MS / 1000)} s`,
+      );
       if (result) {
         stats.proposals.push({ item, result });
         stats.found++;
       } else stats.notFound++;
     } catch (error) {
-      stats.notFound++;
+      stats.failed++;
       const message = error instanceof Error ? error.message : String(error);
       stats.errors.push(`${String(item.getField("title"))}: ${message}`);
       ztoolkit.log(`Metadata lookup failed: ${message}`);
     } finally {
       pending.delete(item.id);
     }
-    await sleep(Math.max(1100, Number(getPref("apiDelayMs")) || 1100));
+    await enrichRuntime.sleep(
+      Math.max(1100, Number(getPref("apiDelayMs")) || 1100),
+    );
   }
   if (stats.proposals.length && options.openReview !== false) {
     openEnrichmentReview(stats.proposals);
   }
   return stats;
+}
+
+/** What to tell the user when a manual lookup produced nothing to review. */
+export function noSuggestionMessage(stats: EnrichmentStats): string {
+  const failed = stats.failed ?? 0;
+  if (stats.alreadyRunning && !stats.notFound && !stats.skipped && !failed)
+    return stats.alreadyRunning === 1
+      ? "A lookup for this item is already running."
+      : `Lookups for these ${stats.alreadyRunning} items are already running.`;
+  const others: string[] = [];
+  if (stats.notFound) others.push(`${stats.notFound} unresolved`);
+  if (stats.skipped) others.push(`${stats.skipped} not eligible`);
+  if (stats.alreadyRunning)
+    others.push(`${stats.alreadyRunning} already running`);
+  if (failed) {
+    const first = stats.errors[0] ?? "";
+    const head =
+      failed === 1
+        ? `The lookup could not be completed. ${first}`
+        : `${failed} lookups could not be completed. First: ${first}`;
+    return others.length ? `${head} (Also: ${others.join("; ")}.)` : head;
+  }
+  return `No matching metadata found (${others.join("; ") || "0 unresolved"}).`;
 }
 
 export class EnrichmentFactory {
@@ -929,20 +1362,26 @@ export class EnrichmentFactory {
       return;
     }
     const popup = new ztoolkit.ProgressWindow(addon.data.config.addonName)
-      .createLine({ text: "Looking up metadata…" })
-      .show();
+      .createLine({ text: "Looking up metadata…", progress: 0 })
+      .show(-1); // stay open until the lookup finishes (default auto-closes after 5 s)
     let popupClosed = false;
     try {
-      const stats = await enrichItems(items, undefined, { openReview: false });
+      const stats = await enrichItems(
+        items,
+        (current, total, title) =>
+          popup.changeLine({
+            text: `Looking up ${current}/${total}: ${title}`,
+            progress: Math.round(((current - 1) / total) * 100),
+          }),
+        { openReview: false },
+      );
       if (stats.proposals.length) {
         popup.close();
         popupClosed = true;
-        await sleep(0);
+        await enrichRuntime.sleep(0);
         openEnrichmentReview(stats.proposals);
       } else {
-        const message = stats.errors.length
-          ? `No suggestions found. ${stats.errors[0]}`
-          : `No matching metadata found (${stats.notFound} unresolved; ${stats.skipped} skipped).`;
+        const message = noSuggestionMessage(stats);
         popup.changeLine({
           text: message,
           progress: 100,

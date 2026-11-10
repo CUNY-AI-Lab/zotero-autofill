@@ -16,6 +16,8 @@ export type FluentMessageId =
   | 'pref-cail-key-description'
   | 'pref-cail-key-label'
   | 'pref-enrich-preisbn-label'
+  | 'pref-googlebooks-key-description'
+  | 'pref-googlebooks-key-label'
   | 'pref-help'
   | 'pref-llm-model-label'
   | 'pref-openrouter-key-description'

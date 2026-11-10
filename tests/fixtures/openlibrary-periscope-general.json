@@ -1,0 +1,51 @@
+{
+  "numFound": 2,
+  "start": 0,
+  "numFoundExact": true,
+  "num_found": 2,
+  "documentation_url": "https://openlibrary.org/dev/docs/api/search",
+  "q": "Through the Periscope Marazzi",
+  "offset": null,
+  "docs": [
+    {
+      "author_name": ["MARAZZI"],
+      "first_publish_year": 2022,
+      "key": "/works/OL27089837W",
+      "title": "Through the Periscohb",
+      "editions": {
+        "numFound": 1,
+        "start": 0,
+        "numFoundExact": true,
+        "docs": [
+          {
+            "key": "/books/OL36768263M",
+            "title": "Through the Periscohb",
+            "publisher": ["State University of New York Press"],
+            "publish_date": ["2022"],
+            "isbn": ["9781438488615", "1438488610"]
+          }
+        ]
+      }
+    },
+    {
+      "author_name": ["MARAZZI"],
+      "first_publish_year": 2022,
+      "key": "/works/OL28806526W",
+      "title": "Through the Perisco",
+      "editions": {
+        "numFound": 1,
+        "start": 0,
+        "numFoundExact": true,
+        "docs": [
+          {
+            "key": "/books/OL39564174M",
+            "title": "Through the Perisco",
+            "publisher": ["State University of New York Press"],
+            "publish_date": ["2022"],
+            "isbn": ["9781438488608", "1438488602"]
+          }
+        ]
+      }
+    }
+  ]
+}

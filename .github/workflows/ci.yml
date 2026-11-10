@@ -49,9 +49,18 @@ jobs:
           path: .scaffold/build
 
   test:
+    # Integration tests run against the current stable Zotero and the beta
+    # (newer Gecko), since the plugin supports both.
+    name: test (Zotero ${{ matrix.channel }})
     runs-on: ubuntu-latest
     needs:
       - build
+    strategy:
+      fail-fast: false
+      matrix:
+        channel:
+          - release
+          - beta
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -60,4 +69,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:unit
+      - name: Download Zotero (${{ matrix.channel }})
+        run: |
+          mkdir -p "$RUNNER_TEMP/zotero"
+          cd "$RUNNER_TEMP/zotero"
+          curl -fsSL -o zotero.archive "https://www.zotero.org/download/client/dl?platform=linux-x86_64&channel=${{ matrix.channel }}"
+          # Builds are .tar.xz now and were .tar.bz2; refuse anything else (e.g. an HTML error page).
+          case "$(file -b zotero.archive)" in
+            XZ*|bzip2*) ;;
+            *) echo "::error::Zotero download is not an xz/bzip2 archive: $(file -b zotero.archive)"; head -c 300 zotero.archive; exit 1 ;;
+          esac
+          tar -xf zotero.archive
+          test -x Zotero_linux-x86_64/zotero
+          # Record which build this job really tested.
+          grep -hE '^(Version|Milestone)=' Zotero_linux-x86_64/application.ini Zotero_linux-x86_64/platform.ini || true
+          echo "ZOTERO_PLUGIN_ZOTERO_BIN_PATH=$PWD/Zotero_linux-x86_64/zotero" >> "$GITHUB_ENV"
       - run: npm run test

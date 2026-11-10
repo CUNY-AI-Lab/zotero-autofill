@@ -1,0 +1,155 @@
+{
+  "status": "ok",
+  "message-type": "work-list",
+  "message-version": "1.0.0",
+  "message": {
+    "facets": {},
+    "total-results": 11931,
+    "items": [
+      {
+        "publisher": "SUNY Press",
+        "DOI": "10.1515\/9781438488622",
+        "type": "edited-book",
+        "created": {
+          "date-parts": [[2024, 3, 7]],
+          "date-time": "2024-03-07T10:25:57Z",
+          "timestamp": 1709807157000
+        },
+        "title": ["Through the Periscope"],
+        "author": [
+          {
+            "given": "Martino",
+            "family": "Marazzi",
+            "sequence": "first",
+            "affiliation": [],
+            "role": [{ "role": "author", "vocabulary": "crossref" }]
+          }
+        ],
+        "published-online": { "date-parts": [[2022, 6, 1]] },
+        "subtitle": ["Changing Culture, Italian America"],
+        "issued": { "date-parts": [[2022, 6, 1]] },
+        "ISBN": ["9781438488622"],
+        "URL": "https:\/\/doi.org\/10.1515\/9781438488622"
+      },
+      {
+        "publisher": "State University of New York Press",
+        "published-print": { "date-parts": [[2022, 6, 1]] },
+        "DOI": "10.2307\/jj.18252345",
+        "type": "monograph",
+        "created": {
+          "date-parts": [[2024, 8, 11]],
+          "date-time": "2024-08-11T20:20:12Z",
+          "timestamp": 1723407612000
+        },
+        "title": ["Through the Periscope"],
+        "author": [
+          {
+            "given": "MARTINO",
+            "family": "MARAZZI",
+            "sequence": "first",
+            "affiliation": [],
+            "role": [{ "role": "author", "vocabulary": "crossref" }]
+          }
+        ],
+        "subtitle": ["Changing Culture, Italian America"],
+        "issued": { "date-parts": [[2022, 6, 1]] },
+        "ISBN": ["9781438488622", "1438488629", "9781438488608"],
+        "URL": "https:\/\/doi.org\/10.2307\/jj.18252345"
+      },
+      {
+        "publisher": "Oxford University Press",
+        "published-print": { "date-parts": [[2001]] },
+        "DOI": "10.1093\/gmo\/9781561592630.article.17705",
+        "type": "reference-book",
+        "created": {
+          "date-parts": [[2017, 12, 13]],
+          "date-time": "2017-12-13T11:20:19Z",
+          "timestamp": 1513164019000
+        },
+        "title": ["Marazzi [Maratius], Silvio"],
+        "author": [
+          {
+            "given": "Iain",
+            "family": "Fenlon",
+            "sequence": "first",
+            "affiliation": [],
+            "role": [{ "role": "author", "vocabulary": "crossref" }]
+          }
+        ],
+        "container-title": ["Oxford Music Online"],
+        "issued": { "date-parts": [[2001]] },
+        "URL": "https:\/\/doi.org\/10.1093\/gmo\/9781561592630.article.17705"
+      },
+      {
+        "publisher": "Wiley",
+        "published-print": { "date-parts": [[2006, 2, 24]] },
+        "DOI": "10.1002\/0470022914",
+        "type": "monograph",
+        "created": {
+          "date-parts": [[2006, 5, 31]],
+          "date-time": "2006-05-31T17:59:08Z",
+          "timestamp": 1149098348000
+        },
+        "title": [
+          "Technology of Semiactive Devices and Applications in Vibration Mitigation"
+        ],
+        "author": [
+          {
+            "given": "Fabio",
+            "family": "Casciati",
+            "sequence": "first",
+            "affiliation": [],
+            "role": [{ "vocabulary": "crossref", "role": "author" }]
+          },
+          {
+            "given": "Georges",
+            "family": "Magonette",
+            "sequence": "additional",
+            "affiliation": [],
+            "role": [{ "vocabulary": "crossref", "role": "author" }]
+          },
+          {
+            "given": "Francesco",
+            "family": "Marazzi",
+            "sequence": "additional",
+            "affiliation": [],
+            "role": [{ "vocabulary": "crossref", "role": "author" }]
+          }
+        ],
+        "published-online": { "date-parts": [[2006, 5, 31]] },
+        "issued": { "date-parts": [[2006, 2, 24]] },
+        "ISBN": ["9780470022894", "9780470022917"],
+        "URL": "https:\/\/doi.org\/10.1002\/0470022914"
+      },
+      {
+        "publisher": "Fordham University Press",
+        "published-print": { "date-parts": [[2011, 11, 1]] },
+        "DOI": "10.2307\/j.ctt1c5ck8s",
+        "type": "monograph",
+        "created": {
+          "date-parts": [[2018, 5, 24]],
+          "date-time": "2018-05-24T16:37:51Z",
+          "timestamp": 1527179871000
+        },
+        "title": ["Voices of Italian America"],
+        "author": [
+          {
+            "given": "Martino",
+            "family": "Marazzi",
+            "sequence": "first",
+            "affiliation": [],
+            "role": [{ "role": "author", "vocabulary": "crossref" }]
+          }
+        ],
+        "subtitle": [
+          "A History of Early Italian American Literature with a Critical Anthology"
+        ],
+        "issued": { "date-parts": [[2011, 11, 1]] },
+        "ISBN": ["9780823245734", "082324573X"],
+        "URL": "https:\/\/doi.org\/10.2307\/j.ctt1c5ck8s"
+      }
+    ],
+    "items-per-page": 5,
+    "query": { "start-index": 0, "search-terms": null }
+  }
+}
