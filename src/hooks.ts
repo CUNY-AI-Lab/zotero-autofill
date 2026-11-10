@@ -5,6 +5,12 @@ import { getString, initLocale } from "./utils/locale";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { createZToolkit } from "./utils/ztoolkit";
 import { migrateKeysFromPrefs } from "./utils/keystore";
+import {
+  createAutoEnrichLimiter,
+  isSyncedAdd,
+} from "./modules/autoEnrichLimit";
+
+const autoEnrichLimiter = createAutoEnrichLimiter();
 
 async function onStartup() {
   await Promise.all([
@@ -76,7 +82,7 @@ function registerNotifier() {
       event: string,
       type: string,
       ids: number[] | string[],
-      _extraData: { [key: string]: any },
+      extraData: { [key: string]: any },
     ) => {
       if (!addon?.data.alive) {
         unregisterNotifier();
@@ -84,7 +90,7 @@ function registerNotifier() {
       }
 
       // Auto-enrich on item add if enabled
-      if (event === "add" && type === "item") {
+      if (event === "add" && type === "item" && !isSyncedAdd(ids, extraData)) {
         const autoEnrich = Zotero.Prefs.get(
           `${addon.data.config.prefsPrefix}.autoEnrichOnImport`,
           true,
@@ -171,6 +177,17 @@ async function onItemsAdded(ids: number[]) {
   );
 
   if (enrichable.length === 0) return;
+
+  const { allowed, notify, cap } = autoEnrichLimiter.take(enrichable.length);
+  if (notify)
+    new ztoolkit.ProgressWindow(addon.data.config.addonName)
+      .createLine({
+        text: `Automatic lookup paused: ${cap} items per hour reached. Use "Enrich Metadata" on the remaining items.`,
+        type: "default",
+      })
+      .show();
+  if (allowed === 0) return;
+  enrichable.length = allowed;
 
   ztoolkit.log(`Auto-enriching ${enrichable.length} new item(s)...`);
 

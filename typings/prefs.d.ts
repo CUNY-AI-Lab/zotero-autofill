@@ -15,6 +15,7 @@ declare namespace _ZoteroTypes {
       "enrichPreIsbn": boolean;
       "apiDelayMs": number;
       "catalogCache": string;
+      "autoEnrichMaxPerHour": number;
     };
   }
 }
