@@ -14,6 +14,7 @@ declare namespace _ZoteroTypes {
       "llmModel": string;
       "enrichPreIsbn": boolean;
       "apiDelayMs": number;
+      "catalogCache": string;
     };
   }
 }

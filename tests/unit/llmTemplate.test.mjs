@@ -7,6 +7,7 @@ globalThis.Zotero = {
   Prefs: { get: (key) => (key.endsWith("ApiKey") ? "k" : "cail") },
   HTTP: {
     request: async (_m, _u, options) => {
+      if (_m === "GET") return { response: { data: [] } };
       lastBody = JSON.parse(options.body);
       return {
         response: {

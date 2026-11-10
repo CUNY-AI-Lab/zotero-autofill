@@ -9,3 +9,5 @@ pref(
 );
 pref("extensions.zotero.metadata-assistant.enrichPreIsbn", true);
 pref("extensions.zotero.metadata-assistant.apiDelayMs", 1100);
+// Hidden: cached CAIL model catalog (JSON with fetch timestamp)
+pref("extensions.zotero.metadata-assistant.catalogCache", "");

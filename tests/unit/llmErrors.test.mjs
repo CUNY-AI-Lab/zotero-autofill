@@ -13,7 +13,8 @@ globalThis.Zotero = {
           : "deepseek/deepseek-v4.1-flash",
   },
   HTTP: {
-    request: async () => {
+    request: async (method) => {
+      if (method === "GET") return { response: { data: [] } };
       const error = new Error("Unexpected status code 4xx");
       error.status = step.status;
       error.xmlhttp = {

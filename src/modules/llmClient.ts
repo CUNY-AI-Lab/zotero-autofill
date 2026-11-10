@@ -3,7 +3,15 @@
  * Handles provider API calls for LLM-enhanced features
  */
 
-import { getPref } from "../utils/prefs";
+import { getPref, setPref } from "../utils/prefs";
+import {
+  getCatalogModels,
+  hasLiveCatalog,
+  isReasoningModel,
+  refreshCatalog,
+} from "./catalog";
+
+export { getCatalogModels, parseCatalog, resetCatalogCache } from "./catalog";
 import {
   getChatCompletionsUrl,
   getConfiguredProvider,
@@ -199,19 +207,70 @@ export function getProviderModelId(
   model: string,
   provider: "openrouter" | "cail",
 ): string {
-  return PROVIDER_MODEL_IDS[
-    getConfiguredModel(model) as (typeof OPEN_WEIGHT_MODELS)[number]
-  ][provider];
+  if (provider === "cail" && getCatalogModels().some((m) => m.id === model))
+    return model;
+  const builtIn = getConfiguredModel(model, provider);
+  return PROVIDER_MODEL_IDS[builtIn as (typeof OPEN_WEIGHT_MODELS)[number]][
+    provider
+  ];
 }
 
-export function getConfiguredModel(requested?: string): string {
+/**
+ * The stored `llmModel` value valid for the provider. For CAIL that is a
+ * catalog ID or one of the built-in menu values; legacy unprefixed values are
+ * coerced; anything else falls back to the default.
+ */
+export function getConfiguredModel(
+  requested?: string,
+  provider: "openrouter" | "cail" = getConfiguredProvider(),
+): string {
   const saved = requested || (getPref("llmModel") as string);
+  if (provider === "cail" && getCatalogModels().some((m) => m.id === saved))
+    return saved;
   const configured = saved?.startsWith("deepseek-")
     ? `deepseek/${saved}`
     : saved;
   return (OPEN_WEIGHT_MODELS as readonly string[]).includes(configured)
     ? configured
     : DEFAULT_LLM_MODEL;
+}
+
+/** The CAIL ID a saved preference value resolves to in the live catalog, if any. */
+export function resolveSavedCailModel(saved: string): string | undefined {
+  const ids = new Set(getCatalogModels().map((m) => m.id));
+  if (ids.has(saved)) return saved;
+  const key = saved?.startsWith("deepseek-") ? `deepseek/${saved}` : saved;
+  const legacy = (
+    PROVIDER_MODEL_IDS as Record<string, { cail: string } | undefined>
+  )[key]?.cail;
+  return legacy && ids.has(legacy) ? legacy : undefined;
+}
+
+/**
+ * Refresh the CAIL catalog (at most daily) and, if the saved model is no
+ * longer offered, switch to the default and tell the user once.
+ */
+export async function ensureCatalogAndModel(): Promise<void> {
+  if (getConfiguredProvider() !== "cail") return;
+  await refreshCatalog();
+  if (!hasLiveCatalog()) return;
+  const saved = getPref("llmModel") as string;
+  if (resolveSavedCailModel(saved)) return;
+  const models = getCatalogModels();
+  const replacement =
+    models.find((m) => m.id === PROVIDER_MODEL_IDS[DEFAULT_LLM_MODEL].cail) ||
+    models[0];
+  setPref("llmModel", replacement.id);
+  try {
+    new ztoolkit.ProgressWindow("Metadata Assistant")
+      .createLine({
+        text: `Model "${saved}" is no longer offered by the CUNY AI Lab Gateway. Switched to ${replacement.name}.`,
+        type: "default",
+      })
+      .show();
+  } catch (error) {
+    ztoolkit.log(`Model migration notice failed: ${error}`);
+  }
 }
 
 /**
@@ -248,6 +307,7 @@ export async function callOpenRouter(
     };
   }
 
+  if (provider === "cail") await ensureCatalogAndModel();
   const model = getConfiguredModel(options?.model);
   const temperature = options?.temperature ?? 0;
   const timeout = options?.timeout ?? 60000;
@@ -260,8 +320,9 @@ export async function callOpenRouter(
 
   const url = getChatCompletionsUrl(provider);
   const providerConfig = getProviderConfig(provider);
+  const providerModel = getProviderModelId(model, provider);
   const payload = {
-    model: getProviderModelId(model, provider),
+    model: providerModel,
     messages,
     temperature,
     response_format: { type: "json_object" },

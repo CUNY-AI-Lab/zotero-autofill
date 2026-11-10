@@ -5,13 +5,19 @@ import { loadModule } from "./helpers.mjs";
 globalThis.Zotero = {
   Prefs: { get: (key) => (key.endsWith("ApiKey") ? "k" : "cail") },
   HTTP: {
-    request: async () => ({
-      response: {
-        choices: [
-          { finish_reason: "length", message: { content: '{"items": [' } },
-        ],
-      },
-    }),
+    request: async (method) =>
+      method === "GET"
+        ? { response: { data: [] } }
+        : {
+            response: {
+              choices: [
+                {
+                  finish_reason: "length",
+                  message: { content: '{"items": [' },
+                },
+              ],
+            },
+          },
   },
 };
 globalThis.ztoolkit = { log() {} };

@@ -153,7 +153,8 @@ globalThis.Zotero = {
     },
   },
   HTTP: {
-    async request() {
+    async request(method) {
+      if (method === "GET") return { response: { data: [] } };
       requestCount++;
       if (requestGate) await requestGate;
       return {

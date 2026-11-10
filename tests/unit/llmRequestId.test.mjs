@@ -1,4 +1,4 @@
-/* global AbortController */
+/* global AbortController, setTimeout */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { loadModule } from "./helpers.mjs";
@@ -16,6 +16,7 @@ globalThis.Zotero = {
   },
   HTTP: {
     request: async (_m, _u, options) => {
+      if (_m === "GET") return { response: { data: [] } };
       sent.push(options);
       return {
         response: { choices: [{ message: { content: '{"ok":true}' } }] },
@@ -60,15 +61,22 @@ test("an aborted signal stops before sending and cancels an in-flight request", 
 
   const live = new AbortController();
   let cancelled = false;
+  let registered = false;
+  const cancelRegistered = () => registered;
   const original = globalThis.Zotero.HTTP.request;
   globalThis.Zotero.HTTP.request = (_m, _u, options) =>
-    new Promise((_resolve, reject) => {
-      options.cancellerReceiver(() => {
-        cancelled = true;
-        reject(new Error("aborted"));
-      });
-    });
+    _m === "GET"
+      ? Promise.resolve({ response: { data: [] } })
+      : new Promise((_resolve, reject) => {
+          registered = true;
+          options.cancellerReceiver(() => {
+            cancelled = true;
+            reject(new Error("aborted"));
+          });
+        });
   const pending = llm.callOpenRouter([], { signal: live.signal });
+  for (let i = 0; i < 20 && !cancelRegistered(); i++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
   live.abort();
   const res = await pending;
   globalThis.Zotero.HTTP.request = original;

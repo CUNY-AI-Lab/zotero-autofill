@@ -1,0 +1,90 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "deepseek-v4.1-flash-1017",
+      "name": "DeepSeek V4.1 Flash 1017",
+      "order": 1,
+      "recommended": true,
+      "tier": "recommended",
+      "status": "active",
+      "modality": "text",
+      "capabilities": [
+        "text-generation",
+        "function-calling",
+        "reasoning",
+        "vision"
+      ]
+    },
+    {
+      "id": "glm-5.3",
+      "name": "Glm 5.3",
+      "order": 2,
+      "recommended": true,
+      "tier": "recommended",
+      "status": "active",
+      "modality": "text",
+      "capabilities": ["text-generation", "function-calling", "reasoning"]
+    },
+    {
+      "id": "gpt-oss-120b",
+      "name": "GPT OSS 120B",
+      "order": 4,
+      "recommended": true,
+      "tier": "recommended",
+      "status": "active",
+      "modality": "text",
+      "capabilities": [
+        "text-generation",
+        "function-calling",
+        "reasoning",
+        "structured-output"
+      ]
+    },
+    {
+      "id": "deepseek-v4-pro-0813",
+      "name": "DeepSeek V4 Pro 0813",
+      "order": 10,
+      "recommended": false,
+      "tier": "advanced",
+      "status": "active",
+      "modality": "text",
+      "capabilities": ["text-generation", "function-calling", "reasoning"]
+    },
+    {
+      "id": "flux-1-schnell",
+      "name": "FLUX.1 [schnell]",
+      "order": 12,
+      "recommended": false,
+      "tier": "advanced",
+      "status": "active",
+      "modality": "image",
+      "capabilities": ["text-to-image"]
+    },
+    {
+      "id": "glm-4.7",
+      "name": "GLM-4.7",
+      "order": 19,
+      "recommended": false,
+      "tier": "advanced",
+      "status": "active",
+      "modality": "text",
+      "capabilities": [
+        "text-generation",
+        "function-calling",
+        "structured-output",
+        "reasoning"
+      ]
+    },
+    {
+      "id": "qwen3-vl-235b-a22b-instruct",
+      "name": "Qwen3 VL 235B A22B Instruct",
+      "order": 58,
+      "recommended": false,
+      "tier": "advanced",
+      "status": "active",
+      "modality": "text",
+      "capabilities": ["text-generation", "vision", "function-calling"]
+    }
+  ]
+}

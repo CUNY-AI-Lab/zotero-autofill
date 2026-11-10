@@ -20,6 +20,7 @@ globalThis.Zotero = {
   },
   HTTP: {
     request: async (...args) => {
+      if (args[0] === "GET") return { response: { data: [] } };
       lastRequest = args;
       return {
         response: {

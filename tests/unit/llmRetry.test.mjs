@@ -15,6 +15,7 @@ globalThis.Zotero = {
   },
   HTTP: {
     request: async (_m, _u, options) => {
+      if (_m === "GET") return { response: { data: [] } };
       calls.push(options);
       const step = script[Math.min(calls.length - 1, script.length - 1)];
       if (step.ok)
