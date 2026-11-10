@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { loadModule } from "./helpers.mjs";
 
 let response;
@@ -62,13 +63,18 @@ test("model IDs follow the selected provider for both models and saved ID format
     for (const provider of ["cail", "openrouter"]) {
       selectedProvider = provider;
       openrouterKey = "test-key";
+      const cailIds = {
+        "deepseek-v4.1-flash": "deepseek-v4.1-flash-1017",
+        "deepseek-v4-pro": "deepseek-v4-pro-0813",
+      };
       for (const slug of ["deepseek-v4.1-flash", "deepseek-v4-pro"]) {
-        for (const saved of [slug, `deepseek/${slug}`]) {
+        // Menu value, and the unprefixed legacy value that getConfiguredModel coerces.
+        for (const saved of [`deepseek/${slug}`, slug]) {
           selectedModel = saved;
           await llm.callOpenRouter([]);
           assert.equal(
             JSON.parse(lastRequest[2].body).model,
-            provider === "cail" ? slug : `deepseek/${slug}`,
+            provider === "cail" ? cailIds[slug] : `deepseek/${slug}`,
           );
         }
       }
@@ -80,6 +86,20 @@ test("model IDs follow the selected provider for both models and saved ID format
     selectedModel = "deepseek/deepseek-v4.1-flash";
     openrouterKey = "";
   }
+});
+
+test("every CAIL model ID the plugin can send is in the checked-in catalog fixture", async () => {
+  const catalog = JSON.parse(
+    await readFile("tests/fixtures/cail-catalog-ids.json", "utf8"),
+  );
+  const sendable = Object.values(llm.PROVIDER_MODEL_IDS).map((ids) => ids.cail);
+  assert.deepEqual(sendable.sort(), [
+    "deepseek-v4-pro-0813",
+    "deepseek-v4.1-flash-1017",
+  ]);
+  for (const id of sendable) assert.ok(catalog.includes(id), `${id} missing`);
+  for (const model of llm.OPEN_WEIGHT_MODELS)
+    assert.ok(catalog.includes(llm.getProviderModelId(model, "cail")));
 });
 
 test("a legacy proprietary preference falls back to the open-weight default", () => {

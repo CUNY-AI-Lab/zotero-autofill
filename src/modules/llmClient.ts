@@ -93,6 +93,34 @@ export const OPEN_WEIGHT_MODELS = [
 ] as const;
 export const DEFAULT_LLM_MODEL = OPEN_WEIGHT_MODELS[0];
 
+/**
+ * Stored preference values (the keys) are provider-neutral; each provider has
+ * its own canonical ID. The Gateway has no aliases, so these must match its
+ * catalog exactly (see tests/fixtures/cail-catalog-ids.json).
+ */
+export const PROVIDER_MODEL_IDS: Record<
+  (typeof OPEN_WEIGHT_MODELS)[number],
+  Record<"openrouter" | "cail", string>
+> = {
+  "deepseek/deepseek-v4.1-flash": {
+    openrouter: "deepseek/deepseek-v4.1-flash",
+    cail: "deepseek-v4.1-flash-1017",
+  },
+  "deepseek/deepseek-v4-pro": {
+    openrouter: "deepseek/deepseek-v4-pro",
+    cail: "deepseek-v4-pro-0813",
+  },
+};
+
+export function getProviderModelId(
+  model: string,
+  provider: "openrouter" | "cail",
+): string {
+  return PROVIDER_MODEL_IDS[
+    getConfiguredModel(model) as (typeof OPEN_WEIGHT_MODELS)[number]
+  ][provider];
+}
+
 export function getConfiguredModel(requested?: string): string {
   const saved = requested || (getPref("llmModel") as string);
   const configured = saved?.startsWith("deepseek-")
@@ -142,7 +170,7 @@ export async function callOpenRouter(
   const url = getChatCompletionsUrl(provider);
   const providerConfig = getProviderConfig(provider);
   const payload = {
-    model: provider === "cail" ? model.replace(/^deepseek\//, "") : model,
+    model: getProviderModelId(model, provider),
     messages,
     temperature,
     response_format: { type: "json_object" },
