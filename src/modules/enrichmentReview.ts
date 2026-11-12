@@ -266,6 +266,22 @@ export function proposedChanges(
     result.OCLC && !/^OCLC:/im.test(extra) ? `OCLC: ${result.OCLC}` : "",
     result.LCCN && !/^LCCN:/im.test(extra) ? `LCCN: ${result.LCCN}` : "",
   ].filter(Boolean);
+  // Record where the data came from, but only alongside real changes, so a
+  // lookup with nothing new to add still proposes nothing.
+  if (changes.length || identifiers.length) {
+    if (
+      result.libraryCatalog &&
+      resolveField(item, "libraryCatalog") &&
+      !getCurrentValue(item, "libraryCatalog")
+    )
+      changes.push({
+        field: "libraryCatalog",
+        before: "",
+        after: result.libraryCatalog,
+      });
+    if (result.openLibraryID && !/^Open Library ID:/im.test(extra))
+      identifiers.push(`Open Library ID: ${result.openLibraryID}`);
+  }
   if (identifiers.length)
     changes.push({
       field: "extra",
@@ -508,6 +524,7 @@ const historyFields = new Set([
   "numPages",
   "date",
   "abstractNote",
+  "libraryCatalog",
   "extra",
 ]);
 function isCreatorChanges(value: unknown): value is CreatorChange[] {

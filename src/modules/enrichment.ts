@@ -28,6 +28,10 @@ export interface EnrichmentResult {
   DOI?: string;
   OCLC?: string;
   LCCN?: string;
+  /** An Open Library edition ID, e.g. "OL7353617M". */
+  openLibraryID?: string;
+  /** The catalog the record came from, for Zotero's Library Catalog field. */
+  libraryCatalog?: string;
   publisher?: string;
   place?: string;
   containerTitle?: string;
@@ -302,6 +306,9 @@ async function fetchOpenLibraryEdition(
     result.title = data.title;
     result.ISBN = isbn;
     result.source = url;
+    result.libraryCatalog = "Open Library";
+    const editionKey = String(data.key || "").match(/^\/books\/(OL\d+M)$/)?.[1];
+    if (editionKey) result.openLibraryID = editionKey;
     const authors = await resolveOpenLibraryAuthors(data.authors);
     if (authors.length) {
       result.authors = authors;
@@ -448,6 +455,8 @@ export async function searchOpenLibrary(
             OCLC: data.oclc_numbers?.[0],
             LCCN: data.lccn?.[0],
             source: editionURL,
+            openLibraryID: key,
+            libraryCatalog: "Open Library",
           };
           candidates.push({
             title: data.title || edition.title,
@@ -570,6 +579,7 @@ export async function searchGoogleBooks(
         const volumeInfo = item.volumeInfo || {};
         const result = parseGoogleBooksVolume(volumeInfo);
         result.source = `https://books.google.com/books?id=${encodeURIComponent(item.id)}`;
+        result.libraryCatalog = "Google Books";
 
         if (Object.keys(result).length > 0) {
           const yearMatch = volumeInfo.publishedDate?.match(/^(\d{4})/);
@@ -666,6 +676,7 @@ function parseCrossrefWork(work: any): EnrichmentResult {
         : doi
           ? `https://doi.org/${doi}`
           : undefined,
+    libraryCatalog: "Crossref",
     author: authorLabel(authors[0]),
     authors,
     DOI: doi,
@@ -1025,6 +1036,8 @@ export async function searchOpenLibraryGeneral(
         source: /^\/(books|works)\/OL\d+[MW]$/.test(key)
           ? `https://openlibrary.org${key}`
           : undefined,
+        openLibraryID: key.match(/^\/books\/(OL\d+M)$/)?.[1],
+        libraryCatalog: "Open Library",
       };
       candidates.push({
         title: editionTitle,

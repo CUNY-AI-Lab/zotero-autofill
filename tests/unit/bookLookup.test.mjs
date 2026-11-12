@@ -248,6 +248,58 @@ test("an item with an ISBN resolves that edition only", async () => {
   );
 });
 
+test("each catalog names itself, and Open Library results carry the edition ID", async () => {
+  recordedBehavior({
+    olIsbn: {
+      key: "/books/OL7353617M",
+      title: "Through the Periscope",
+      isbn_13: ["9781438488622"],
+    },
+  });
+  const byIsbn = await mod.lookupItem(periscope({ ISBN: "9781438488622" }));
+  assert.equal(byIsbn.libraryCatalog, "Open Library");
+  assert.equal(byIsbn.openLibraryID, "OL7353617M");
+
+  const book = (key) => ({
+    key: "/works/OL1W",
+    title: "Through the Periscope",
+    author_name: ["Laura E. Ruberto"],
+    editions: { docs: [{ key, title: "Through the Periscope" }] },
+  });
+  recordedBehavior({
+    olStructured: (url) =>
+      url.includes("/books/")
+        ? { title: "Through the Periscope" }
+        : { numFound: 1, docs: [book("/books/OL1M")] },
+  });
+  const [structured] = (await mod.searchOpenLibrary("Periscope", "", null))
+    .candidates;
+  assert.equal(structured.result.libraryCatalog, "Open Library");
+  assert.equal(structured.result.openLibraryID, "OL1M");
+
+  // A free-text hit without an edition key has no edition ID to record.
+  recordedBehavior({ olGeneral: { docs: [{ ...book(""), editions: {} }] } });
+  const [general] = (await mod.searchOpenLibraryGeneral("Periscope", ""))
+    .candidates;
+  assert.equal(general.result.libraryCatalog, "Open Library");
+  assert.equal(general.result.openLibraryID, undefined);
+
+  recordedBehavior({
+    google: {
+      totalItems: 1,
+      items: [{ id: "abc", volumeInfo: { title: "Through the Periscope" } }],
+    },
+  });
+  const [google] = (await mod.searchGoogleBooks("Periscope", "")).candidates;
+  assert.equal(google.result.libraryCatalog, "Google Books");
+
+  recordedBehavior();
+  const [crossref] = (await mod.searchCrossref("Periscope", "Marazzi", null))
+    .candidates;
+  assert.equal(crossref.result.libraryCatalog, "Crossref");
+  assert.equal(crossref.result.openLibraryID, undefined);
+});
+
 test("an ISBN lookup that fails in transport is reported, a 404 is a miss", async () => {
   recordedBehavior({ olIsbn: (url) => httpError(503, url) });
   await assert.rejects(mod.lookupItem(periscope({ ISBN: "9781438488622" })), {
