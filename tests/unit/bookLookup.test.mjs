@@ -309,6 +309,43 @@ test("a Google Books key goes in a header to googleapis.com only, never in a URL
   }
 });
 
+test("Open Library source links go to the web page, not the JSON record", async () => {
+  recordedBehavior({
+    olIsbn: { title: "Through the Periscope", isbn_13: ["9781438488622"] },
+  });
+  const byIsbn = await mod.lookupItem(periscope({ ISBN: "9781438488622" }));
+  assert.equal(byIsbn.source, "https://openlibrary.org/isbn/9781438488622");
+  assert.match(requests[0].url, /\/isbn\/9781438488622\.json$/);
+
+  recordedBehavior({
+    olStructured: (url) =>
+      url.includes("/books/OL1M.json")
+        ? { title: "Through the Periscope", publishers: ["SUNY Press"] }
+        : {
+            numFound: 1,
+            docs: [
+              {
+                key: "/works/OL1W",
+                title: "Through the Periscope",
+                author_name: ["Laura E. Ruberto"],
+                editions: { docs: [{ key: "/books/OL1M" }] },
+              },
+            ],
+          },
+  });
+  const search = await mod.searchOpenLibrary(
+    "Through the Periscope",
+    "Ruberto",
+    null,
+  );
+  assert.equal(
+    search.candidates[0].result.source,
+    "https://openlibrary.org/books/OL1M",
+  );
+  assert.equal(search.candidates[0].result.publisher, "SUNY Press");
+  assert.ok(requests.some((r) => r.url.endsWith("/books/OL1M.json")));
+});
+
 test("titles tolerate a subtitle on one side only", () => {
   const full = "Through the Periscope: Changing Culture, Italian America";
   assert.ok(mod.titlesMatch("Through the Periscope", full));

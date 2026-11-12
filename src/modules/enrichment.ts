@@ -301,7 +301,7 @@ async function fetchOpenLibraryEdition(
 
     result.title = data.title;
     result.ISBN = isbn;
-    result.source = url;
+    result.source = `https://openlibrary.org/isbn/${isbn}`;
     const authors = await resolveOpenLibraryAuthors(data.authors);
     if (authors.length) {
       result.authors = authors;
@@ -401,7 +401,7 @@ export async function searchOpenLibrary(
   params.set("limit", "5");
   params.set(
     "fields",
-    "key,title,author_name,editions,editions.key,editions.title,editions.isbn,editions.publish_date,editions.publisher,editions.language",
+    "key,title,author_name,editions,editions.key,editions.title,editions.isbn,editions.publish_date,editions.publisher",
   );
 
   const url = `https://openlibrary.org/search.json?${params.toString()}`;
@@ -447,7 +447,7 @@ export async function searchOpenLibrary(
             )?.[0],
             OCLC: data.oclc_numbers?.[0],
             LCCN: data.lccn?.[0],
-            source: editionURL,
+            source: `https://openlibrary.org/books/${key}`,
           };
           candidates.push({
             title: data.title || edition.title,
