@@ -309,6 +309,36 @@ test("a Google Books key goes in a header to googleapis.com only, never in a URL
   }
 });
 
+test("every catalog request identifies the plugin in its User-Agent", async () => {
+  // Both searches, plus an ISBN lookup whose author is only a key.
+  recordedBehavior({ crossref: { status: "ok", message: { items: [] } } });
+  await mod.lookupItem(periscope()).catch(() => {});
+  const searchRequests = requests;
+  recordedBehavior({
+    olIsbn: {
+      title: "Through the Periscope",
+      isbn_13: ["9781438488622"],
+      authors: [{ key: "/authors/OL1A" }],
+    },
+    olStructured: { name: "Teresa Fiore" },
+  });
+  await mod.lookupItem(periscope({ ISBN: "9781438488622" }));
+  const all = [...searchRequests, ...requests];
+  const ol = all.filter((r) => r.url.startsWith("https://openlibrary.org/"));
+  assert.ok(ol.some((r) => r.url.includes("search.json?title=")));
+  assert.ok(ol.some((r) => r.url.includes("search.json?q=")));
+  assert.ok(ol.some((r) => r.url.includes("/isbn/")));
+  assert.ok(ol.some((r) => r.url.includes("/authors/OL1A.json")));
+  assert.ok(all.some((r) => r.kind === "google"));
+  assert.ok(all.some((r) => r.kind === "crossref"));
+  for (const r of all)
+    assert.match(
+      r.options.headers?.["User-Agent"] ?? "",
+      /^Zotero Metadata Assistant\/.* \(https:\/\/github\.com\/CUNY-AI-Lab\/zotero-autofill\)$/,
+      r.url,
+    );
+});
+
 test("titles tolerate a subtitle on one side only", () => {
   const full = "Through the Periscope: Changing Culture, Italian America";
   assert.ok(mod.titlesMatch("Through the Periscope", full));
