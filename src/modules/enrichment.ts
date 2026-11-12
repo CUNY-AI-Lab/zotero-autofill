@@ -262,6 +262,35 @@ async function resolveOpenLibraryAuthors(
   return resolved;
 }
 
+/** An Open Library `description`: a plain string or `{ type, value }`. */
+function openLibraryDescription(description: unknown): string {
+  const text =
+    typeof description === "string" ? description : (description as any)?.value;
+  return typeof text === "string" ? text.trim() : "";
+}
+
+/**
+ * Open Library usually keeps a book's description on the work, not on each
+ * edition. Fetch it from the edition's first work; "" if there is none or
+ * the request fails (the edition data is still used).
+ */
+async function fetchOpenLibraryWorkDescription(
+  works: unknown,
+): Promise<string> {
+  const key = String((Array.isArray(works) && works[0]?.key) || "");
+  if (!/^\/works\/OL\d+W$/.test(key)) return "";
+  try {
+    await enrichRuntime.sleep(
+      Math.max(1100, Number(getPref("apiDelayMs")) || 1100),
+    );
+    const response = await lookupRequest(`https://openlibrary.org${key}.json`);
+    return openLibraryDescription((response.response as any)?.description);
+  } catch (error) {
+    ztoolkit.log(`Open Library work fetch error for ${key}: ${error}`);
+    return "";
+  }
+}
+
 /**
  * Fetch detailed edition data from Open Library using ISBN
  */
@@ -331,16 +360,13 @@ async function fetchOpenLibraryEdition(
       }
     }
 
-    // Description/abstract
-    if (data.description) {
-      const desc =
-        typeof data.description === "string"
-          ? data.description
-          : data.description.value || "";
-      if (desc) {
-        result.abstractNote =
-          desc.length > 500 ? desc.substring(0, 497) + "..." : desc;
-      }
+    // Description/abstract: the edition's own, else the work's.
+    const desc =
+      openLibraryDescription(data.description) ||
+      (await fetchOpenLibraryWorkDescription(data.works));
+    if (desc) {
+      result.abstractNote =
+        desc.length > 500 ? desc.substring(0, 497) + "..." : desc;
     }
 
     // LCCN
