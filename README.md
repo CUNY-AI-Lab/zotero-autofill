@@ -21,7 +21,7 @@ Existing populated fields are preserved. OCLC and LCCN are stored as labelled id
 
 ## Import a bibliography
 
-1. In **Settings → Metadata Assistant**, choose **CUNY AI Lab Gateway** or **OpenRouter**, enter that provider’s key, and choose a DeepSeek model. To use another provider, choose **Other OpenAI-compatible endpoint** (see [Other providers](#other-providers)).
+1. In **Settings → Metadata Assistant**, choose **CUNY AI Lab Gateway** or **OpenRouter**, enter that provider’s key, and choose a model. To use another provider, choose **Other OpenAI-compatible endpoint** (see [Other providers](#other-providers)).
 2. Select the destination library and collection in Zotero, then open **Tools → Import Bibliography Text…**.
 3. Paste entries separated by a blank line. Wrapped lines within a paragraph stay together.
 4. Click **Parse with AI**. Compare every parsed record to its original text; edit fields and deselect records you do not want. Missing and invalid responses are reported per entry.
@@ -78,7 +78,7 @@ Remove the selected provider’s key to stop AI requests and continue using cata
 
 ### Open-weight model policy
 
-The built-in model menus for the Gateway and OpenRouter are limited to DeepSeek’s downloadable-weight models. A custom endpoint uses whatever model you name; that choice, and its data policy, are yours.
+The Gateway menu lists the models the Gateway recommends in its live catalog. The OpenRouter menu is read from OpenRouter’s public model list (refreshed at most daily) and limited to downloadable-weight models: the three newest models in each of the DeepSeek, Qwen, Kimi, GLM, gpt-oss, Llama, Mistral, and Gemma families that have a Hugging Face ID, accept JSON responses, and take at least 32k tokens of context. Each entry shows its input price. If the list cannot be loaded, the two DeepSeek models below remain available. A custom endpoint uses whatever model you name; that choice, and its data policy, are yours.
 
 CAIL Gateway requests use prefix-free IDs (`deepseek-v4.1-flash` and `deepseek-v4-pro`); OpenRouter requests retain the `deepseek/` prefix. Saved V4 Flash selections resolve to V4.1 Flash.
 

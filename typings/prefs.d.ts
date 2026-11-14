@@ -17,6 +17,7 @@ declare namespace _ZoteroTypes {
       "enrichPreIsbn": boolean;
       "apiDelayMs": number;
       "catalogCache": string;
+      "openrouterCatalogCache": string;
       "autoEnrichMaxPerHour": number;
     };
   }

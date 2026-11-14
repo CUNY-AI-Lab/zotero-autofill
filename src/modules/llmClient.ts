@@ -24,6 +24,15 @@ export {
 } from "./catalog";
 export { resetKeyStoreState } from "../utils/keystore";
 import {
+  isOfferedOpenRouterModel,
+  refreshOpenRouterCatalog,
+} from "./openrouterCatalog";
+export {
+  getOpenRouterMenuModels,
+  parseOpenRouterModels,
+  resetOpenRouterCatalog,
+} from "./openrouterCatalog";
+import {
   getChatCompletionsUrl,
   getConfiguredProvider,
   getCustomModel,
@@ -285,6 +294,7 @@ export function getProviderModelId(
   if (provider === "custom") return getCustomModel();
   if (provider === "cail" && getCatalogModels().some((m) => m.id === model))
     return model;
+  if (provider === "openrouter") return getConfiguredModel(model, provider);
   const builtIn = getConfiguredModel(model, provider);
   return PROVIDER_MODEL_IDS[builtIn as (typeof OPEN_WEIGHT_MODELS)[number]][
     provider
@@ -308,9 +318,16 @@ export function getConfiguredModel(
   const configured = saved?.startsWith("deepseek-")
     ? `deepseek/${saved}`
     : saved;
-  return (OPEN_WEIGHT_MODELS as readonly string[]).includes(configured)
-    ? configured
-    : DEFAULT_LLM_MODEL;
+  if ((OPEN_WEIGHT_MODELS as readonly string[]).includes(configured))
+    return configured;
+  // OpenRouter also accepts any model from its live open-weight list.
+  if (
+    provider === "openrouter" &&
+    configured &&
+    isOfferedOpenRouterModel(configured)
+  )
+    return configured;
+  return DEFAULT_LLM_MODEL;
 }
 
 /** The CAIL ID a saved preference value resolves to in the live catalog, if any. */
@@ -393,6 +410,7 @@ export async function callOpenRouter(
   }
 
   if (provider === "cail") await ensureCatalogAndModel();
+  if (provider === "openrouter") await refreshOpenRouterCatalog();
   const model = getConfiguredModel(options?.model);
   const temperature = options?.temperature ?? 0;
   const timeout = options?.timeout ?? 60000;

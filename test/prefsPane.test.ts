@@ -78,6 +78,7 @@ describe("settings pane in real Zotero", function () {
     setPref("aiProvider", "cail");
     setPref("llmModel", "deepseek/deepseek-v4.1-flash");
     setPref("catalogCache", "");
+    setPref("openrouterCatalogCache", "");
     api().resetCatalogCache();
     await api().setApiKey("cailApiKey", "sk-cail-pane-dummy");
     await api().setApiKey("openrouterApiKey", "");
@@ -97,6 +98,7 @@ describe("settings pane in real Zotero", function () {
       "aiProvider",
       "llmModel",
       "catalogCache",
+      "openrouterCatalogCache",
       "customBaseUrl",
       "customModel",
     ])

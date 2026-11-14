@@ -1,6 +1,5 @@
 import {
   DEFAULT_LLM_MODEL,
-  OPEN_WEIGHT_MODELS,
   ensureCatalogAndModel,
   getConfiguredModel,
   getMenuModels,
@@ -8,6 +7,11 @@ import {
 } from "./llmClient";
 import { getPref, setPref } from "../utils/prefs";
 import { listCustomModels, parseCustomBaseUrl } from "./provider";
+import {
+  getOpenRouterMenuModels,
+  openRouterLabel,
+  refreshOpenRouterCatalog,
+} from "./openrouterCatalog";
 import {
   KEYSTORE_UNAVAILABLE_MESSAGE,
   getApiKey,
@@ -19,12 +23,6 @@ import {
 
 const id = (name: string) =>
   `zotero-prefpane-${addon.data.config.addonRef}-${name}`;
-
-const OPEN_WEIGHT_LABELS: Record<string, string> = {
-  "deepseek/deepseek-v4.1-flash":
-    "DeepSeek V4.1 Flash — lower cost (Recommended)",
-  "deepseek/deepseek-v4-pro": "DeepSeek V4 Pro — higher quality",
-};
 
 /** Key fields, in pane order: element id suffix and login-manager name. */
 const KEY_FIELDS: Array<[string, KeyName]> = [
@@ -40,8 +38,9 @@ export const KEY_SAVE_DELAY_MS = 400;
 /**
  * Fill the model menu. CAIL: recommended Gateway models (plus the built-in
  * DeepSeek models and the saved one), shown at once from the cached catalog
- * and refreshed from the Gateway in the background. OpenRouter: the two
- * built-in DeepSeek models. The selection is written to `llmModel` only when
+ * and refreshed from the Gateway in the background. OpenRouter: the newest
+ * open-weight models of each allowed family (plus the built-in DeepSeek
+ * pair), shown from the cached list and refreshed the same way. The selection is written to `llmModel` only when
  * the user picks one.
  */
 let menuGeneration = 0;
@@ -55,10 +54,13 @@ function fillModelMenu(doc: Document, provider: string) {
     return el;
   };
   if (provider === "openrouter") {
+    const selected = getConfiguredModel(undefined, "openrouter");
     menu.menupopup.replaceChildren(
-      ...OPEN_WEIGHT_MODELS.map((m) => item(m, OPEN_WEIGHT_LABELS[m])),
+      ...getOpenRouterMenuModels(selected).map((m) =>
+        item(m.id, openRouterLabel(m)),
+      ),
     );
-    menu.value = getConfiguredModel(undefined, "openrouter");
+    menu.value = selected;
     return;
   }
   const saved = getPref("llmModel") as string;
@@ -149,8 +151,8 @@ async function populateModelMenu(doc: Document, provider: string) {
   showProviderFields(doc, provider);
   if (provider === "custom") return;
   fillModelMenu(doc, provider);
-  if (provider === "openrouter") return;
-  await ensureCatalogAndModel();
+  if (provider === "openrouter") await refreshOpenRouterCatalog();
+  else await ensureCatalogAndModel();
   // A later provider switch owns the menu now.
   if (generation === menuGeneration) fillModelMenu(doc, provider);
 }

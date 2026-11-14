@@ -162,7 +162,11 @@ test("OpenRouter never fetches the CAIL catalog", async () => {
   prefs.aiProvider = "openrouter";
   prefs.openrouterApiKey = "k";
   await llm.callOpenRouter([]);
-  assert.equal(calls.filter((c) => c.method === "GET").length, 0);
+  assert.equal(
+    calls.filter((c) => c.method === "GET" && c.url.includes("/catalog"))
+      .length,
+    0,
+  );
   assert.equal(sentModel(), "deepseek/deepseek-v4.1-flash");
 });
 

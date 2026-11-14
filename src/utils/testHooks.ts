@@ -19,6 +19,17 @@ export function testCailBaseUrl(): string | undefined {
 }
 
 /**
+ * OpenRouter model-list URL to request. Test builds never reach the live API:
+ * they use `data.testOpenRouterCatalogUrl` when set and otherwise skip the
+ * fetch (undefined), leaving the built-in models in place.
+ */
+export function testOpenRouterCatalogUrl(url: string): string | undefined {
+  if (__env__ !== "test") return url;
+  const value = testData()?.testOpenRouterCatalogUrl;
+  return typeof value === "string" && value ? value : undefined;
+}
+
+/**
  * Lookup URL to request: unchanged, except in test builds with
  * `data.testLookupBaseUrl` set, where `https://host/path` becomes
  * `<base>/host/path`.
