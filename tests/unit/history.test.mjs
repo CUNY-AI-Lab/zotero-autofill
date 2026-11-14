@@ -245,6 +245,75 @@ test("title changes pass history validation and save", async () => {
   assert.equal(values.title, "Full title");
 });
 
+test("review records the catalog and Open Library ID alongside real changes", () => {
+  const target = {
+    ...item({ title: "Matilda", extra: "OCLC: 1" }),
+    getCreators: () => [],
+  };
+  const changes = review.proposedChanges(target, {
+    publisher: "Puffin",
+    openLibraryID: "OL7353617M",
+    libraryCatalog: "Open Library",
+  });
+  assert.deepEqual(changes, [
+    { field: "publisher", before: "", after: "Puffin" },
+    { field: "libraryCatalog", before: "", after: "Open Library" },
+    {
+      field: "extra",
+      before: "OCLC: 1",
+      after: "OCLC: 1\nOpen Library ID: OL7353617M",
+    },
+  ]);
+  // Both can be undone.
+  const undo = review.pendingUndo(
+    item({
+      title: "Matilda",
+      publisher: "Puffin",
+      libraryCatalog: "Open Library",
+      extra: "OCLC: 1\nOpen Library ID: OL7353617M",
+    }),
+    [{ id: 1, record: record(changes) }],
+  );
+  assert.deepEqual(
+    undo.changes.map((c) => c.field),
+    ["publisher", "libraryCatalog", "extra"],
+  );
+});
+
+test("review proposes nothing when only the catalog and ID would change", () => {
+  const target = {
+    ...item({ title: "Matilda", publisher: "Puffin" }),
+    getCreators: () => [],
+  };
+  assert.deepEqual(
+    review.proposedChanges(target, {
+      publisher: "Puffin",
+      openLibraryID: "OL7353617M",
+      libraryCatalog: "Open Library",
+    }),
+    [],
+  );
+});
+
+test("review keeps an existing Library Catalog and Open Library ID", () => {
+  const target = {
+    ...item({
+      title: "Matilda",
+      libraryCatalog: "Library of Congress",
+      extra: "Open Library ID: OL1M",
+    }),
+    getCreators: () => [],
+  };
+  assert.deepEqual(
+    review.proposedChanges(target, {
+      publisher: "Puffin",
+      openLibraryID: "OL7353617M",
+      libraryCatalog: "Open Library",
+    }),
+    [{ field: "publisher", before: "", after: "Puffin" }],
+  );
+});
+
 test("multi-author history can be undone after saving", () => {
   globalThis.Zotero.CreatorTypes = { getID: () => 1 };
   const target = {
