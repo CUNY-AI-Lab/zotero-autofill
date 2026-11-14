@@ -10,6 +10,8 @@ declare namespace _ZoteroTypes {
       "openrouterApiKey": string;
       "cailApiKey": string;
       "aiProvider": string;
+      "customBaseUrl": string;
+      "customModel": string;
       "autoEnrichOnImport": boolean;
       "llmModel": string;
       "enrichPreIsbn": boolean;

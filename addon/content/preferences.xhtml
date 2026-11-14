@@ -20,6 +20,7 @@
       <menupopup>
         <menuitem label="CUNY AI Lab Gateway (Recommended)" value="cail" />
         <menuitem label="OpenRouter" value="openrouter" />
+        <menuitem label="Other OpenAI-compatible endpoint" value="custom" />
       </menupopup>
     </menulist>
   </hbox>
@@ -27,8 +28,8 @@
     >Book and article title, author, year, ISBN, or DOI are sent to Open
     Library, Google Books, or Crossref during lookup. When a provider key is
     configured, bibliography text and matching queries/results are sent to the
-    selected DeepSeek model through the provider. Requests use your account or
-    CUNY allocation. Provider data policies apply.</description
+    selected model through the provider or endpoint. Requests use your account
+    or CUNY allocation. Provider data policies apply.</description
   >
   <!-- CUNY API Key -->
   <hbox align="center">
@@ -64,6 +65,72 @@
     data-l10n-id="pref-openrouter-key-description"
     style="margin-left: 20px; color: gray"
   ></description>
+  <!-- Custom OpenAI-compatible endpoint, shown when selected -->
+  <vbox id="metadata-custom-endpoint" hidden="true">
+    <hbox align="center">
+      <html:label
+        for="zotero-prefpane-__addonRef__-custom-baseurl"
+        data-l10n-id="pref-custom-baseurl-label"
+      ></html:label>
+      <html:input
+        type="url"
+        id="zotero-prefpane-__addonRef__-custom-baseurl"
+        preference="customBaseUrl"
+        placeholder="https://api.openai.com/v1"
+        style="width: 300px"
+      ></html:input>
+    </hbox>
+    <description
+      data-l10n-id="pref-custom-baseurl-description"
+      style="margin-left: 20px; color: gray"
+    ></description>
+    <hbox align="center">
+      <html:label
+        for="zotero-prefpane-__addonRef__-custom-apikey"
+        data-l10n-id="pref-custom-key-label"
+      ></html:label>
+      <html:input
+        type="password"
+        id="zotero-prefpane-__addonRef__-custom-apikey"
+        style="width: 300px"
+      ></html:input>
+    </hbox>
+    <description
+      data-l10n-id="pref-custom-key-description"
+      style="margin-left: 20px; color: gray"
+    ></description>
+    <hbox align="center">
+      <html:label
+        for="zotero-prefpane-__addonRef__-custom-model"
+        data-l10n-id="pref-custom-model-label"
+      ></html:label>
+      <html:input
+        type="text"
+        id="zotero-prefpane-__addonRef__-custom-model"
+        preference="customModel"
+        placeholder="gpt-4.1-mini"
+        style="width: 250px"
+      ></html:input>
+    </hbox>
+    <hbox align="center" style="margin-left: 20px">
+      <button
+        id="zotero-prefpane-__addonRef__-custom-load-models"
+        data-l10n-id="pref-custom-load-models"
+      />
+      <menulist
+        id="zotero-prefpane-__addonRef__-custom-models"
+        hidden="true"
+        style="width: 250px"
+      >
+        <menupopup />
+      </menulist>
+    </hbox>
+    <description
+      id="metadata-custom-status"
+      role="status"
+      style="margin-left: 20px; color: gray"
+    ></description>
+  </vbox>
   <!-- Google Books API Key (optional) -->
   <hbox align="center">
     <html:label
@@ -101,8 +168,8 @@
     style="color: #b00020"
   ></description>
 
-  <!-- LLM Model -->
-  <hbox align="center">
+  <!-- LLM Model (built-in providers) -->
+  <hbox id="metadata-model-row" align="center">
     <html:label
       for="zotero-prefpane-__addonRef__-llmmodel"
       data-l10n-id="pref-llm-model-label"

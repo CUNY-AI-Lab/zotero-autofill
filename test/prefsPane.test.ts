@@ -93,7 +93,13 @@ describe("settings pane in real Zotero", function () {
     delete instance().data.testBaseUrl;
     for (const name of ["cailApiKey", "openrouterApiKey", "googleBooksApiKey"])
       await api().setApiKey(name, "");
-    for (const pref of ["aiProvider", "llmModel", "catalogCache"])
+    for (const pref of [
+      "aiProvider",
+      "llmModel",
+      "catalogCache",
+      "customBaseUrl",
+      "customModel",
+    ])
       clearPref(pref);
   });
 
@@ -167,6 +173,31 @@ describe("settings pane in real Zotero", function () {
       "deepseek/deepseek-v4-pro",
     ]);
     assert.equal(menu.value, "deepseek/deepseek-v4.1-flash");
+    setPref("aiProvider", "cail");
+  });
+
+  it("shows the custom endpoint fields and flags a remote http URL", async function () {
+    win = await openPane();
+    const doc = win.document;
+    const section = doc.getElementById("metadata-custom-endpoint") as any;
+    const modelRow = doc.getElementById("metadata-model-row") as any;
+    assert.isTrue(section.hidden);
+    const provider = el(win, "provider");
+    provider.value = "custom";
+    provider.dispatchEvent(new win.Event("command", { bubbles: true }));
+    assert.isFalse(section.hidden);
+    assert.isTrue(modelRow.hidden);
+    const base = el(win, "custom-baseurl");
+    base.value = "http://api.example.com/v1";
+    base.dispatchEvent(new win.Event("input", { bubbles: true }));
+    assert.match(
+      doc.getElementById("metadata-custom-status")!.textContent!,
+      /https/,
+    );
+    provider.value = "cail";
+    provider.dispatchEvent(new win.Event("command", { bubbles: true }));
+    assert.isTrue(section.hidden);
+    assert.isFalse(modelRow.hidden);
     setPref("aiProvider", "cail");
   });
 });

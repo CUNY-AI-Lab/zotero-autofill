@@ -21,13 +21,35 @@ Existing populated fields are preserved. OCLC and LCCN are stored as labelled id
 
 ## Import a bibliography
 
-1. In **Settings → Metadata Assistant**, choose **CUNY AI Lab Gateway** or **OpenRouter**, enter that provider’s key, and choose a DeepSeek model.
+1. In **Settings → Metadata Assistant**, choose **CUNY AI Lab Gateway** or **OpenRouter**, enter that provider’s key, and choose a DeepSeek model. To use another provider, choose **Other OpenAI-compatible endpoint** (see [Other providers](#other-providers)).
 2. Select the destination library and collection in Zotero, then open **Tools → Import Bibliography Text…**.
 3. Paste entries separated by a blank line. Wrapped lines within a paragraph stay together.
 4. Click **Parse with AI**. Compare every parsed record to its original text; edit fields and deselect records you do not want. Missing and invalid responses are reported per entry.
 5. Check the destination, then import. Duplicate candidates are reported for review. Saved rows retain their status, so retrying a partial failure does not import those rows again.
 
 Original text and model provenance accompany imported items. Optional enrichment opens a separate review of catalogue suggestions.
+
+### Other providers
+
+**Other OpenAI-compatible endpoint** connects to any service that implements the OpenAI chat completions API. Enter:
+
+- **Endpoint base URL**, the part before `/chat/completions` (a pasted full URL is accepted). Remote endpoints must use `https://`; plain `http://` is allowed only for `localhost`.
+- **Endpoint API key**, stored in Zotero’s saved-password store like the other keys. Leave it empty for a local server that needs none.
+- **Model ID**, exactly as the provider names it. **Load models from endpoint** reads the provider’s `GET /models` list into a menu; if the provider has no list, type the ID.
+
+| Provider          | Base URL                                                  |
+| ----------------- | --------------------------------------------------------- |
+| OpenAI            | `https://api.openai.com/v1`                               |
+| Anthropic         | `https://api.anthropic.com/v1`                            |
+| Google Gemini     | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| Mistral           | `https://api.mistral.ai/v1`                               |
+| Groq              | `https://api.groq.com/openai/v1`                          |
+| Together          | `https://api.together.xyz/v1`                             |
+| DeepSeek          | `https://api.deepseek.com/v1`                             |
+| Ollama (local)    | `http://localhost:11434/v1`                               |
+| LM Studio (local) | `http://localhost:1234/v1`                                |
+
+Servers differ in the optional parameters they accept. If one rejects `max_tokens`, `temperature`, or `response_format`, the plugin renames or drops that parameter and retries; replies wrapped in Markdown code fences are still read. Small local models may return incomplete JSON for long bibliographies, so import in smaller batches and check every record. Anthropic’s model list needs a different auth header, so type its model ID.
 
 ### Humanities walkthrough
 
@@ -48,7 +70,7 @@ The dialogs use labelled native inputs and buttons. Navigate with Tab, use Space
 - **Catalogue lookup:** sends book queries (title, author, year) to Open Library, Crossref and Google Books, or an existing ISBN to Open Library only (that edition is the only one considered). Results from all catalogues are merged before a match is chosen, and a catalogue that fails (for example Google Books' shared anonymous quota running out) is named in the result instead of being reported as "not found". An optional Google Books API key in settings gives you your own Google quota; it is kept in the login manager and sent only to googleapis.com. Scholarly articles use [Crossref](https://www.crossref.org/), including DOI lookup when a DOI is already present. Source links identify returned records.
 - **AI:** when a provider key is configured, sends pasted bibliography text, query text, or candidate metadata through the selected provider to DeepSeek V4. Without a key, catalogue lookup still works but bibliography parsing shows an add-a-key error.
 - **Provider access:** CUNY users can create a personal key through [CUNY Model Access](https://ailab.gc.cuny.edu/docs/api-keys/). The gateway uses `https://tools.ailab.gc.cuny.edu/v1` and its CUNY quota. OpenRouter uses your OpenRouter account and credits.
-- **Billing:** OpenRouter charges your account; CUNY Gateway requests use the CUNY allocation and quota. Check the selected provider before large imports.
+- **Billing:** OpenRouter charges your account; CUNY Gateway requests use the CUNY allocation and quota; a custom endpoint bills whichever account its key belongs to. Check the selected provider before large imports.
 - **Storage:** the API key is stored in your profile's Firefox login manager (the saved-password store Zotero uses), not in plaintext preferences; a key saved by an earlier version is moved there on first start and the old preference is cleared. If you use a master password, you may be asked to unlock it, and AI features report an error until you do. Versions 1.1.1 and earlier read keys only from preferences, so after going back to one of them, enter the key there again; when you upgrade, the key entered in the older version replaces the stored one. Original bibliography text and change-history notes become part of your Zotero library and follow its sync/sharing settings.
 - **Provider policies:** retention and processing depend on OpenRouter and the selected provider. The plugin does not promise institutional approval, confidential processing, or zero retention.
 
@@ -56,7 +78,7 @@ Remove the selected provider’s key to stop AI requests and continue using cata
 
 ### Open-weight model policy
 
-The model menu is limited to DeepSeek’s downloadable-weight models:
+The built-in model menus for the Gateway and OpenRouter are limited to DeepSeek’s downloadable-weight models. A custom endpoint uses whatever model you name; that choice, and its data policy, are yours.
 
 CAIL Gateway requests use prefix-free IDs (`deepseek-v4.1-flash` and `deepseek-v4-pro`); OpenRouter requests retain the `deepseek/` prefix. Saved V4 Flash selections resolve to V4.1 Flash.
 

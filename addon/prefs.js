@@ -2,6 +2,9 @@
 pref("extensions.zotero.metadata-assistant.openrouterApiKey", "");
 pref("extensions.zotero.metadata-assistant.cailApiKey", "");
 pref("extensions.zotero.metadata-assistant.aiProvider", "cail");
+// Custom OpenAI-compatible endpoint (its API key lives in the login manager)
+pref("extensions.zotero.metadata-assistant.customBaseUrl", "");
+pref("extensions.zotero.metadata-assistant.customModel", "");
 pref("extensions.zotero.metadata-assistant.autoEnrichOnImport", false);
 pref(
   "extensions.zotero.metadata-assistant.llmModel",

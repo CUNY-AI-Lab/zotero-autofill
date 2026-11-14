@@ -26,9 +26,12 @@ export { resetKeyStoreState } from "../utils/keystore";
 import {
   getChatCompletionsUrl,
   getConfiguredProvider,
+  getCustomModel,
   getMissingProviderKeyMessage,
   getProviderConfig,
   getProviderKey,
+  isProviderReady,
+  type LLMProvider,
 } from "./provider";
 
 // ==================== Types ====================
@@ -134,8 +137,60 @@ const MAX_RETRY_AFTER_MS = 30000;
 export const MAX_TOKENS_SHORT = 4000;
 export const MAX_TOKENS_PARSE = 16000;
 export const MAX_TOKENS_REASONING_MIN = 8000;
-/** Entries per bibliography-parse request; the Gateway gets smaller batches. */
-export const PARSE_BATCH_SIZE = { cail: 10, openrouter: 25 } as const;
+/** Entries per bibliography-parse request; the Gateway and custom endpoints get smaller batches. */
+export const PARSE_BATCH_SIZE = {
+  cail: 10,
+  openrouter: 25,
+  custom: 10,
+} as const;
+
+/**
+ * Parse a JSON object from model output. Endpoints that ignore
+ * `response_format` often wrap the JSON in a Markdown fence or add a sentence
+ * around it; take the outermost object in that case.
+ */
+export function parseModelJson(content: string): any {
+  const text = content.trim();
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+    if (fenced) return JSON.parse(fenced.trim());
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start >= 0 && end > start)
+      return JSON.parse(text.slice(start, end + 1));
+    throw error;
+  }
+}
+
+/**
+ * OpenAI-compatible servers differ in which optional parameters they accept:
+ * newer OpenAI models want `max_completion_tokens` and only the default
+ * temperature; LM Studio rejects `response_format: json_object`. When a custom
+ * endpoint's 400 response names one of these, change that parameter and try
+ * again. Returns whether the payload changed.
+ */
+export function adaptPayloadToError(
+  payload: Record<string, any>,
+  errorText: string,
+): boolean {
+  const text = errorText.toLowerCase();
+  if ("max_tokens" in payload && text.includes("max_completion_tokens")) {
+    payload.max_completion_tokens = payload.max_tokens;
+    delete payload.max_tokens;
+    return true;
+  }
+  if ("response_format" in payload && text.includes("response_format")) {
+    delete payload.response_format;
+    return true;
+  }
+  if ("temperature" in payload && text.includes("temperature")) {
+    delete payload.temperature;
+    return true;
+  }
+  return false;
+}
 
 function responseHeader(xhr: any, name: string): string | undefined {
   try {
@@ -172,9 +227,11 @@ function describeApiError(
   fallback: string,
 ): string {
   const message =
-    typeof apiError?.message === "string" && apiError.message.trim()
-      ? apiError.message.trim()
-      : fallback;
+    typeof apiError === "string" && apiError.trim()
+      ? apiError.trim().slice(0, 500)
+      : typeof apiError?.message === "string" && apiError.message.trim()
+        ? apiError.message.trim()
+        : fallback;
   const details = [
     typeof apiError?.code === "string" && apiError.code
       ? `code: ${apiError.code}`
@@ -223,8 +280,9 @@ export const PROVIDER_MODEL_IDS: Record<
 
 export function getProviderModelId(
   model: string,
-  provider: "openrouter" | "cail",
+  provider: LLMProvider,
 ): string {
+  if (provider === "custom") return getCustomModel();
   if (provider === "cail" && getCatalogModels().some((m) => m.id === model))
     return model;
   const builtIn = getConfiguredModel(model, provider);
@@ -236,12 +294,14 @@ export function getProviderModelId(
 /**
  * The stored `llmModel` value valid for the provider. For CAIL that is a
  * catalog ID or one of the built-in menu values; legacy unprefixed values are
- * coerced; anything else falls back to the default.
+ * coerced; anything else falls back to the default. A custom endpoint uses its
+ * own `customModel` preference, whatever the endpoint calls the model.
  */
 export function getConfiguredModel(
   requested?: string,
-  provider: "openrouter" | "cail" = getConfiguredProvider(),
+  provider: LLMProvider = getConfiguredProvider(),
 ): string {
+  if (provider === "custom") return getCustomModel();
   const saved = requested || (getPref("llmModel") as string);
   if (provider === "cail" && getCatalogModels().some((m) => m.id === saved))
     return saved;
@@ -292,10 +352,11 @@ export async function ensureCatalogAndModel(): Promise<void> {
 }
 
 /**
- * Check if LLM features are available (API key is set)
+ * Check if LLM features are available: a key for a hosted provider, or a
+ * base URL and model for a custom endpoint (whose key is optional).
  */
 export function isLLMAvailable(): boolean {
-  return getProviderKey().length > 0;
+  return isProviderReady();
 }
 
 // ==================== Core LLM Functions ====================
@@ -304,7 +365,9 @@ export function isLLMAvailable(): boolean {
  * Call the configured provider. OpenRouter retries 429/5xx/timeouts with
  * backoff. The CAIL Gateway makes one attempt, plus at most one retry when it
  * sends `x-should-retry: true` (timeouts and quota denials are never retried
- * because the first attempt may already have been charged).
+ * because the first attempt may already have been charged). A custom endpoint
+ * retries like OpenRouter and may also drop or rename an optional parameter
+ * it rejects (see adaptPayloadToError).
  */
 export async function callOpenRouter(
   messages: Array<{ role: string; content: string }>,
@@ -320,7 +383,7 @@ export async function callOpenRouter(
   const provider = getConfiguredProvider();
   await migrateKeysFromPrefs();
   const apiKey = getProviderKey(provider);
-  if (!apiKey) {
+  if (!isProviderReady(provider)) {
     return {
       success: false,
       error: getKeyStoreProblem()
@@ -334,6 +397,8 @@ export async function callOpenRouter(
   const temperature = options?.temperature ?? 0;
   const timeout = options?.timeout ?? 60000;
   const isCail = provider === "cail";
+  const isCustom = provider === "custom";
+  let adaptations = 0;
   const maxRetries = isCail
     ? 2
     : Math.max(1, Math.min(5, options?.maxRetries ?? 3));
@@ -344,7 +409,7 @@ export async function callOpenRouter(
   const providerConfig = getProviderConfig(provider);
   const providerModel = getProviderModelId(model, provider);
   const maxTokens = options?.maxTokens ?? MAX_TOKENS_SHORT;
-  const payload = {
+  const payload: Record<string, any> = {
     model: providerModel,
     messages,
     temperature,
@@ -363,7 +428,8 @@ export async function callOpenRouter(
     try {
       const response = await Zotero.HTTP.request("POST", url, {
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          // A custom endpoint on this computer may need no key.
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
           "Content-Type": "application/json",
           ...(providerConfig.id === "cail"
             ? {
@@ -425,7 +491,24 @@ export async function callOpenRouter(
       const xhr = error.xmlhttp;
       const status: number | undefined = error.status ?? xhr?.status;
       const isTimeout = /timeout|timed out/i.test(error.message || "");
-      const apiError = xhr ? readErrorBody(xhr)?.error : undefined;
+      const errorBody = xhr ? readErrorBody(xhr) : undefined;
+      const apiError =
+        errorBody?.error ?? errorBody?.message ?? errorBody?.detail;
+
+      if (
+        isCustom &&
+        status === 400 &&
+        adaptations < 3 &&
+        errorBody &&
+        adaptPayloadToError(payload, JSON.stringify(errorBody))
+      ) {
+        adaptations++;
+        ztoolkit.log(
+          "Custom endpoint rejected an optional parameter; retrying without it.",
+        );
+        attempt--;
+        continue;
+      }
 
       let willRetry = false;
       let delay = baseDelay * Math.pow(2, attempt);
@@ -516,7 +599,7 @@ export async function llmCleanupQuery(
   }
 
   try {
-    const parsed = JSON.parse(response.content);
+    const parsed = parseModelJson(response.content);
     if (
       !parsed ||
       typeof parsed.title !== "string" ||
@@ -585,7 +668,7 @@ export async function llmDisambiguate(
   }
 
   try {
-    const parsed = JSON.parse(response.content);
+    const parsed = parseModelJson(response.content);
     if (
       !parsed ||
       typeof parsed.confidence !== "number" ||
@@ -830,7 +913,7 @@ export async function parseBibliographyWithLLM(
       });
     } else {
       try {
-        const parsed = JSON.parse(response.content);
+        const parsed = parseModelJson(response.content);
         if (!parsed || !Array.isArray(parsed.items))
           throw new Error("Response must contain an items array");
         // Unknown IDs make the batch mapping untrustworthy; duplicate known IDs fail that entry.

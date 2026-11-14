@@ -33,10 +33,12 @@ function log(message: string) {
   if (typeof ztoolkit !== "undefined") ztoolkit.log(message);
 }
 
-export type KeyName = "cailApiKey" | "openrouterApiKey" | "googleBooksApiKey";
+export type KeyName =
+  "cailApiKey" | "openrouterApiKey" | "customApiKey" | "googleBooksApiKey";
 const KEY_NAMES: KeyName[] = [
   "cailApiKey",
   "openrouterApiKey",
+  "customApiKey",
   "googleBooksApiKey",
 ];
 /** Keys that versions up to 1.1.1 kept in plaintext preferences. */
