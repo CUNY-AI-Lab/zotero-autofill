@@ -297,6 +297,63 @@ async function fetchOpenLibraryWorkDescription(
   }
 }
 
+function truncateAbstract(text: string): string {
+  return text.length > 500 ? text.substring(0, 497) + "..." : text;
+}
+
+/**
+ * Complete an Open Library search match from its edition record: place, page
+ * count, OCLC, LCCN and description, which the search does not return.
+ * Edition data replaces what a merged catalog supplied; ISBN and abstract are
+ * only filled when missing. A failed fetch leaves the match as searched.
+ */
+async function fetchOpenLibraryEditionDetails(
+  result: EnrichmentResult,
+): Promise<void> {
+  const key = result.openLibraryID;
+  if (result.libraryCatalog !== "Open Library" || !key) return;
+  let data: any;
+  try {
+    await enrichRuntime.sleep(
+      Math.max(1100, Number(getPref("apiDelayMs")) || 1100),
+    );
+    data = (await lookupRequest(`https://openlibrary.org/books/${key}.json`))
+      .response;
+  } catch (error) {
+    ztoolkit.log(`Open Library edition ${key} error: ${error}`);
+    return;
+  }
+  if (!data || typeof data !== "object") return;
+  result.publisher = data.publishers?.[0] || result.publisher;
+  result.place = data.publish_places?.[0] || result.place;
+  result.numPages = data.number_of_pages || result.numPages;
+  result.OCLC = data.oclc_numbers?.[0] || result.OCLC;
+  result.LCCN = data.lccn?.[0] || result.LCCN;
+  result.ISBN ||= data.isbn_13?.[0] || data.isbn_10?.[0];
+  if (!result.abstractNote) {
+    const desc =
+      openLibraryDescription(data.description) ||
+      (await fetchOpenLibraryWorkDescription(data.works));
+    if (desc) result.abstractNote = truncateAbstract(desc);
+  }
+}
+
+/** Fetch edition records for the chosen match, or for each ambiguous choice. */
+async function completeOpenLibraryMatches(
+  result: EnrichmentResult | null,
+): Promise<void> {
+  if (!result) return;
+  if (!result.candidates?.length) {
+    await fetchOpenLibraryEditionDetails(result);
+    return;
+  }
+  for (const candidate of result.candidates) {
+    await fetchOpenLibraryEditionDetails(candidate.result);
+    candidate.publisher = candidate.result.publisher;
+    candidate.isbn = candidate.result.ISBN;
+  }
+}
+
 /**
  * Fetch detailed edition data from Open Library using ISBN
  */
@@ -374,8 +431,7 @@ async function fetchOpenLibraryEdition(
       openLibraryDescription(data.description) ||
       (await fetchOpenLibraryWorkDescription(data.works));
     if (desc) {
-      result.abstractNote =
-        desc.length > 500 ? desc.substring(0, 497) + "..." : desc;
+      result.abstractNote = truncateAbstract(desc);
     }
 
     // LCCN
@@ -451,43 +507,30 @@ export async function searchOpenLibrary(
 
       for (const doc of data.docs.slice(0, 5)) {
         // Never combine identifiers or aggregate page counts from different editions.
+        // Edition records are fetched later, only for matches.
         for (const edition of doc.editions?.docs || []) {
-          const isbn = edition.isbn?.find((value: string) =>
-            /^\d{13}$/.test(value),
-          );
+          const isbn =
+            edition.isbn?.find((v: string) => /^\d{13}$/.test(v)) ||
+            edition.isbn?.find((v: string) => /^\d{9}[\dX]$/.test(v));
           const key = edition.key?.replace(/^\/books\//, "");
           if (!key || !/^OL\d+M$/.test(key)) continue;
-          const editionURL = `https://openlibrary.org/books/${key}.json`;
-          await enrichRuntime.sleep(1100);
-          let data: any = {};
-          try {
-            data = (await lookupRequest(editionURL)).response || {};
-          } catch (error) {
-            // Keep what the search itself said about this edition.
-            ztoolkit.log(`Open Library edition ${key} error: ${error}`);
-          }
           const authors = (doc.author_name || []).map((name: string) => ({
             name,
           }));
+          const title = edition.title || doc.title;
           const result: EnrichmentResult = {
-            title: data.title || edition.title || doc.title,
+            title,
             author: doc.author_name?.[0],
             authors,
-            ISBN: data.isbn_13?.[0] || data.isbn_10?.[0] || isbn,
-            publisher: data.publishers?.[0] || edition.publisher?.[0],
-            place: data.publish_places?.[0],
-            numPages: data.number_of_pages,
-            date: (data.publish_date || edition.publish_date?.[0])?.match(
-              /\d{4}/,
-            )?.[0],
-            OCLC: data.oclc_numbers?.[0],
-            LCCN: data.lccn?.[0],
+            ISBN: isbn,
+            publisher: edition.publisher?.[0],
+            date: edition.publish_date?.[0]?.match(/\d{4}/)?.[0],
             source: `https://openlibrary.org/books/${key}`,
             openLibraryID: key,
             libraryCatalog: "Open Library",
           };
           candidates.push({
-            title: data.title || edition.title,
+            title,
             author: doc.author_name?.[0],
             year: result.date,
             publisher: result.publisher,
@@ -1244,7 +1287,10 @@ export async function lookupItem(
     first.candidates,
     { returnAmbiguous: true },
   );
-  if (result?.candidates?.length) return result;
+  if (result?.candidates?.length) {
+    await completeOpenLibraryMatches(result);
+    return result;
+  }
   if (!result && isLLMAvailable()) {
     const cleaned = await llmCleanupQuery(title, author);
     if (cleaned && (cleaned.title !== title || cleaned.author !== author)) {
@@ -1267,6 +1313,7 @@ export async function lookupItem(
   // A catalog that refused or failed is not the same as "not found".
   if (!result && reports.some((r) => r.error))
     throw new LookupFailedError(reports);
+  await completeOpenLibraryMatches(result);
   if (result && year !== null && year < 1970 && getPref("enrichPreIsbn")) {
     // A historical edition must not inherit a later reprint's ISBN.
     delete result.ISBN;
