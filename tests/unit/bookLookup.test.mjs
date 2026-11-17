@@ -391,6 +391,18 @@ test("every catalog request identifies the plugin in its User-Agent", async () =
     );
 });
 
+test("the User-Agent carries the plugin's release version", async () => {
+  const { version } = JSON.parse(await readFile("package.json", "utf8"));
+  recordedBehavior({
+    olIsbn: { title: "Through the Periscope", isbn_13: ["9781438488622"] },
+  });
+  await mod.lookupItem(periscope({ ISBN: "9781438488622" }));
+  assert.equal(
+    requests[0].options.headers["User-Agent"],
+    `Zotero Metadata Assistant/${version} (https://github.com/CUNY-AI-Lab/zotero-autofill)`,
+  );
+});
+
 test("Open Library source links go to the web page, not the JSON record", async () => {
   recordedBehavior({
     olIsbn: { title: "Through the Periscope", isbn_13: ["9781438488622"] },

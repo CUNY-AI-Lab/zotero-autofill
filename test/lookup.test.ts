@@ -1,5 +1,5 @@
 import { assert } from "chai";
-import { config } from "../package.json";
+import { config, version } from "../package.json";
 import { clearPref, setPref } from "../src/utils/prefs";
 // Real responses recorded for the item that failed in 1.1.1.
 import olStructured from "../tests/fixtures/openlibrary-periscope-structured.json";
@@ -104,6 +104,20 @@ describe("book lookup in real Zotero", function () {
     assert.include(message, "Crossref had a server error (503)");
     assert.include(message, "Google Books refused the request (rate limit");
     assert.notInclude(message, "No matching metadata found");
+  });
+
+  it("identifies the plugin and its version to every catalog", async function () {
+    // Zotero.HTTP must not drop or replace the User-Agent the plugin sets.
+    await script(recorded);
+    await api().enrichItems([item], undefined, { openReview: false });
+    const log = await lookupLog();
+    assert.isNotEmpty(log);
+    for (const r of log)
+      assert.equal(
+        r.headers["user-agent"],
+        `Zotero Metadata Assistant/${version} (https://github.com/CUNY-AI-Lab/zotero-autofill)`,
+        r.url,
+      );
   });
 
   it("sends a saved Google Books key as a header to Google only", async function () {

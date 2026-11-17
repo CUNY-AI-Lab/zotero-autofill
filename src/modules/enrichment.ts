@@ -4,6 +4,7 @@
  * Includes LLM-enhanced features: fuzzy matching fallback and disambiguation
  */
 
+import { version } from "../../package.json";
 import { getPref } from "../utils/prefs";
 import { getApiKey, migrateKeysFromPrefs } from "../utils/keystore";
 import { lookupUrl } from "../utils/testHooks";
@@ -112,8 +113,8 @@ function sleep(ms: number): Promise<void> {
 /** Replaceable in tests so pacing delays do not take real time. */
 export const enrichRuntime = { sleep };
 
-const POLITE_USER_AGENT =
-  "Zotero Metadata Assistant/1.0 (https://github.com/CUNY-AI-Lab/zotero-autofill)";
+/** Names the plugin and its release (package.json) to the catalogs. */
+const POLITE_USER_AGENT = `Zotero Metadata Assistant/${version} (https://github.com/CUNY-AI-Lab/zotero-autofill)`;
 
 /**
  * GET a catalog URL. Every lookup sends the plugin's User-Agent, as the
