@@ -412,20 +412,17 @@ test("Open Library source links go to the web page, not the JSON record", async 
   assert.match(requests[0].url, /\/isbn\/9781438488622\.json$/);
 
   recordedBehavior({
-    olStructured: (url) =>
-      url.includes("/books/OL1M.json")
-        ? { title: "Through the Periscope", publishers: ["SUNY Press"] }
-        : {
-            numFound: 1,
-            docs: [
-              {
-                key: "/works/OL1W",
-                title: "Through the Periscope",
-                author_name: ["Laura E. Ruberto"],
-                editions: { docs: [{ key: "/books/OL1M" }] },
-              },
-            ],
-          },
+    olStructured: {
+      numFound: 1,
+      docs: [
+        {
+          key: "/works/OL1W",
+          title: "Through the Periscope",
+          author_name: ["Laura E. Ruberto"],
+          editions: { docs: [{ key: "/books/OL1M" }] },
+        },
+      ],
+    },
   });
   const search = await mod.searchOpenLibrary(
     "Through the Periscope",
@@ -436,8 +433,181 @@ test("Open Library source links go to the web page, not the JSON record", async 
     search.candidates[0].result.source,
     "https://openlibrary.org/books/OL1M",
   );
+});
+
+// Open Library title/author search: edition records only for matches.
+
+const olHit = (n, title, edition = {}) => ({
+  key: `/works/OL${n}W`,
+  title,
+  author_name: ["Martino Marazzi"],
+  editions: {
+    docs: [
+      {
+        key: `/books/OL${n}M`,
+        title,
+        publisher: ["SUNY Press"],
+        publish_date: ["2022"],
+        ...edition,
+      },
+    ],
+  },
+});
+const periscopeEdition = {
+  title: "Through the Periscope",
+  publishers: ["State University of New York Press"],
+  publish_places: ["Albany"],
+  number_of_pages: 312,
+  oclc_numbers: ["1300000000"],
+  lccn: ["2021000000"],
+  isbn_13: ["9781438488622"],
+  works: [{ key: "/works/OL1W" }],
+};
+const defaultHits = [
+  olHit(1, "Through the Periscope"),
+  olHit(2, "Periscope Depth"),
+  olHit(3, "Up Periscope"),
+  olHit(4, "The Periscope Book"),
+  olHit(5, "Periscopes of the Navy"),
+];
+/**
+ * Stub the search hits and the edition/work records, keyed like "books/OL1M".
+ * A null record answers 503; an unlisted record is a test failure.
+ */
+function olSearch({ records = {}, hits = defaultHits } = {}) {
+  const all = {
+    "books/OL1M": periscopeEdition,
+    "works/OL1W": { description: { type: "/type/text", value: "Essays." } },
+    ...records,
+  };
+  recordedBehavior({
+    crossref: { status: "ok", message: { items: [] } },
+    google: { totalItems: 0 },
+    olStructured: (url) => {
+      const key = url.match(/\/((?:books|works)\/OL\w+)\.json/)?.[1];
+      if (!key) return { numFound: hits.length, docs: hits };
+      if (all[key] === null) return httpError(503, url);
+      if (!all[key]) throw new Error(`unexpected record request ${url}`);
+      return all[key];
+    },
+  });
+}
+const recordRequests = () =>
+  requests
+    .map((r) => r.url)
+    .filter((url) => /openlibrary\.org\/(books|works)\//.test(url));
+
+test("the search builds candidates without fetching edition records", async () => {
+  olSearch();
+  const search = await mod.searchOpenLibrary("Periscope", "", null);
+  assert.equal(search.candidates.length, 5);
+  assert.deepEqual(recordRequests(), []);
   assert.equal(search.candidates[0].result.publisher, "SUNY Press");
-  assert.ok(requests.some((r) => r.url.endsWith("/books/OL1M.json")));
+  assert.equal(search.candidates[0].year, "2022");
+});
+
+test("a lookup fetches the matched edition and its work, each after a pause", async () => {
+  olSearch();
+  const pausedAt = [];
+  const realSleep = mod.enrichRuntime.sleep;
+  mod.enrichRuntime.sleep = async (ms) => {
+    if (ms >= 1100) pausedAt.push(requests.length);
+  };
+  try {
+    const result = await mod.lookupItem(periscope({ date: "2022" }));
+    assert.deepEqual(recordRequests(), [
+      "https://openlibrary.org/books/OL1M.json",
+      "https://openlibrary.org/works/OL1W.json",
+    ]);
+    for (const url of recordRequests())
+      assert.ok(pausedAt.includes(requests.findIndex((r) => r.url === url)));
+    assert.equal(result.openLibraryID, "OL1M");
+    assert.equal(result.publisher, "State University of New York Press");
+    assert.equal(result.place, "Albany");
+    assert.equal(result.numPages, 312);
+    assert.equal(result.OCLC, "1300000000");
+    assert.equal(result.LCCN, "2021000000");
+    assert.equal(result.ISBN, "9781438488622");
+    assert.equal(result.abstractNote, "Essays.");
+  } finally {
+    mod.enrichRuntime.sleep = realSleep;
+  }
+});
+
+test("an edition's own description is used without fetching its work", async () => {
+  olSearch({
+    records: { "books/OL1M": { ...periscopeEdition, description: "Own." } },
+  });
+  const result = await mod.lookupItem(periscope({ date: "2022" }));
+  assert.equal(result.abstractNote, "Own.");
+  assert.deepEqual(recordRequests(), [
+    "https://openlibrary.org/books/OL1M.json",
+  ]);
+});
+
+test("a failed edition or work fetch leaves the match usable", async () => {
+  olSearch({ records: { "books/OL1M": null } });
+  const noEdition = await mod.lookupItem(periscope({ date: "2022" }));
+  assert.equal(noEdition.openLibraryID, "OL1M");
+  assert.equal(noEdition.publisher, "SUNY Press");
+  assert.equal(noEdition.place, undefined);
+
+  olSearch({ records: { "works/OL1W": null } });
+  const noWork = await mod.lookupItem(periscope({ date: "2022" }));
+  assert.equal(noWork.place, "Albany");
+  assert.equal(noWork.abstractNote, undefined);
+});
+
+test("no edition record is fetched when nothing matches", async () => {
+  olSearch();
+  await mod.lookupItem(periscope({ title: "Some Other Book" }));
+  assert.deepEqual(recordRequests(), []);
+});
+
+test("each choice in an ambiguous match gets its edition record", async () => {
+  olSearch({
+    hits: [
+      olHit(1, "Through the Periscope", { isbn: ["9781438488622"] }),
+      olHit(6, "Through the Periscope", { isbn: ["9781438488608"] }),
+    ],
+    records: {
+      "books/OL6M": {
+        ...periscopeEdition,
+        publish_places: ["New York"],
+        works: [],
+      },
+    },
+  });
+  const result = await mod.lookupItem(periscope({ date: "2022" }));
+  assert.deepEqual(result.candidates.map((c) => c.result.place).sort(), [
+    "Albany",
+    "New York",
+  ]);
+  assert.deepEqual(recordRequests().sort(), [
+    "https://openlibrary.org/books/OL1M.json",
+    "https://openlibrary.org/books/OL6M.json",
+    "https://openlibrary.org/works/OL1W.json",
+  ]);
+});
+
+test("a match from another catalog fetches no Open Library record", async () => {
+  olSearch({ hits: [] });
+  behavior.google = {
+    totalItems: 1,
+    items: [
+      {
+        id: "g1",
+        volumeInfo: {
+          title: "Through the Periscope",
+          authors: ["Martino Marazzi"],
+          publishedDate: "2022",
+        },
+      },
+    ],
+  };
+  const result = await mod.lookupItem(periscope({ date: "2022" }));
+  assert.equal(result.libraryCatalog, "Google Books");
+  assert.deepEqual(recordRequests(), []);
 });
 
 test("titles tolerate a subtitle on one side only", () => {
