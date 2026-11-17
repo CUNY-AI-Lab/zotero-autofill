@@ -112,14 +112,15 @@ const POLITE_USER_AGENT =
   "Zotero Metadata Assistant/1.0 (https://github.com/CUNY-AI-Lab/zotero-autofill)";
 
 /**
- * GET a catalog URL. Every lookup has a 10 s timeout and no automatic retry:
+ * GET a catalog URL. Every lookup sends the plugin's User-Agent, as the
+ * catalogs ask API clients to, and has a 10 s timeout and no automatic retry:
  * `errorDelayMax: 0` stops Zotero.HTTP's own 5xx backoff (up to an hour in
  * Zotero 7-10) and `noRetryOnThrottle` stops it from sleeping on a 429/503
  * `Retry-After` and trying again, which `errorDelayMax: 0` alone does not.
  */
 function lookupRequest(url: string, headers?: Record<string, string>) {
   return Zotero.HTTP.request("GET", lookupUrl(url), {
-    ...(headers ? { headers } : {}),
+    headers: { "User-Agent": POLITE_USER_AGENT, ...headers },
     timeout: 10000,
     errorDelayMax: 0,
     noRetryOnThrottle: true,
@@ -695,7 +696,7 @@ async function fetchCrossrefWork(
   const url = `https://api.crossref.org/works/${encodeURIComponent(normalized)}`;
   let response: any;
   try {
-    response = await lookupRequest(url, { "User-Agent": POLITE_USER_AGENT });
+    response = await lookupRequest(url);
   } catch (error) {
     ztoolkit.log(`Crossref DOI lookup error for ${normalized}: ${error}`);
     if (isNotFound(error)) return null;
@@ -735,9 +736,7 @@ async function fetchSemanticScholarTitle(
   for (const delay of [0, 1200]) {
     if (delay) await enrichRuntime.sleep(delay);
     try {
-      const response = await lookupRequest(url, {
-        "User-Agent": POLITE_USER_AGENT,
-      });
+      const response = await lookupRequest(url);
       const title = (response.response as any)?.title;
       if (typeof title === "string" && title.trim()) return title.trim();
       return undefined;
@@ -752,9 +751,7 @@ async function fetchSemanticScholarTitle(
   if (!query) return undefined;
   const searchURL = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=10&fields=title,externalIds`;
   try {
-    const response = await lookupRequest(searchURL, {
-      "User-Agent": POLITE_USER_AGENT,
-    });
+    const response = await lookupRequest(searchURL);
     const normalizedDOI = doi.trim().toLowerCase();
     const match = ((response.response as any)?.data || []).find(
       (paper: any) =>
@@ -792,9 +789,7 @@ export async function searchCrossref(
     );
   const url = `https://api.crossref.org/works?${params.toString()}`;
   try {
-    const response = await lookupRequest(url, {
-      "User-Agent": POLITE_USER_AGENT,
-    });
+    const response = await lookupRequest(url);
     const items = (response.response as any)?.message?.items;
     const candidates = Array.isArray(items)
       ? items
