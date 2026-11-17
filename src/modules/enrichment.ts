@@ -1014,6 +1014,10 @@ function workKey(c: APICandidate): string {
  * are filled from the later one; nothing already present is overwritten.
  * Records with different ISBNs, or different or unknown years without an ISBN
  * to tie them, are different editions and stay separate.
+ *
+ * An Open Library edition ID is the exception: a wrong one is worse than none.
+ * A record keeps its own, but takes one from a record merged into it only when
+ * both ISBNs agree and the title and author agree too.
  */
 export function mergeCandidates(
   merged: APICandidate[],
@@ -1037,8 +1041,16 @@ export function mergeCandidates(
       continue;
     }
     const target = twin.result as Record<string, unknown>;
+    const sameEdition =
+      Boolean(isbn) &&
+      isbn === (twin.isbn ? canonicalISBN(twin.isbn) : "") &&
+      titlesMatch(twin.title || "", c.title || "") &&
+      Boolean(twin.author && c.author) &&
+      (authorMatches(twin.author || "", c.author || "") ||
+        authorMatches(c.author || "", twin.author || ""));
     for (const [key, value] of Object.entries(c.result)) {
       if (key === "candidates" || value === undefined || value === "") continue;
+      if (key === "openLibraryID" && !sameEdition) continue;
       if (Array.isArray(value) && !value.length) continue;
       const current = target[key];
       if (

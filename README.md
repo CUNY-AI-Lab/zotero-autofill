@@ -17,7 +17,7 @@ The plugin supports Zotero 7 through Zotero 11.0.x; the manifest declares `stric
 3. Open the source link and check that it describes your edition. Select the missing fields you want and click **Save selected changes**.
 4. A child note records the source, time, and before/after values. Use **Tools → Undo Metadata Changes…** to review an undo. Undo preserves fields you have subsequently edited.
 
-Existing populated fields are preserved. OCLC, LCCN and the Open Library edition ID are stored as labelled identifiers in Extra; LCCN is not a shelf call number. An empty Library Catalog field is set to the catalogue the match came from (Open Library, Crossref or Google Books) when the lookup adds other data. Work-level aggregate page counts and unrelated reprint ISBNs are not applied. Automatic lookup, if enabled in settings, opens suggestions for review; it does not save them automatically.
+Existing populated fields are preserved. OCLC, LCCN and the Open Library edition ID are stored as labelled identifiers in Extra; LCCN is not a shelf call number. The edition ID is recorded when Open Library supplied the match, or when a match from another catalogue has the same ISBN, title and author as the Open Library record; otherwise it is left out. An empty Library Catalog field is set to the catalogue the match came from (Open Library, Crossref or Google Books) when the lookup adds other data. Work-level aggregate page counts and unrelated reprint ISBNs are not applied. Automatic lookup, if enabled in settings, opens suggestions for review; it does not save them automatically.
 
 ## Import a bibliography
 

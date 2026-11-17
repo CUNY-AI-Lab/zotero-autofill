@@ -676,3 +676,295 @@ test("merging folds the same book from different catalogs and keeps editions apa
   assert.equal(merged[1].result.place, "Elsewhere", "unknown year kept apart");
   assert.equal(merged[2].isbn, "9781438488608", "different ISBN kept apart");
 });
+
+// The Open Library edition ID crosses a merge only with evidence: an Open
+// Library match keeps its own; a match from another catalog takes it only
+// when the ISBNs agree and so do title and author.
+
+const periscopeRecord = (fields, result = {}) => ({
+  title: "Through the Periscope",
+  author: "Martino Marazzi",
+  year: "2022",
+  ...fields,
+  result: { ISBN: fields.isbn, ...result },
+});
+const olRecord = (fields, result = {}) =>
+  periscopeRecord(fields, {
+    openLibraryID: "OL2M",
+    libraryCatalog: "Open Library",
+    place: "Albany",
+    ...result,
+  });
+
+test("an Open Library match keeps its ID when another catalog merges in", () => {
+  const [merged] = mod.mergeCandidates(
+    [olRecord({})],
+    [periscopeRecord({}, { libraryCatalog: "Crossref", DOI: "10.1/x" })],
+  );
+  assert.equal(merged.result.openLibraryID, "OL2M");
+  assert.equal(merged.result.libraryCatalog, "Open Library");
+  assert.equal(merged.result.DOI, "10.1/x");
+});
+
+test("an Open Library record merged on title, surname and year alone adds no ID", () => {
+  for (const [primary, incoming] of [
+    // Crossref has no ISBN; Open Library has one.
+    [{}, { isbn: "9781438488622" }],
+    // Google Books has an ISBN; Open Library has none.
+    [{ isbn: "9781438488622" }, {}],
+  ]) {
+    const merged = mod.mergeCandidates(
+      [periscopeRecord(primary, { libraryCatalog: "Crossref" })],
+      [olRecord({ author: "MARAZZI", ...incoming })],
+    );
+    assert.equal(merged.length, 1, "still one record");
+    assert.equal(merged[0].result.openLibraryID, undefined);
+    assert.equal(merged[0].result.place, "Albany", "other fields still fill");
+    assert.equal(merged[0].result.libraryCatalog, "Crossref");
+  }
+});
+
+test("matching ISBNs (10 and 13) with matching title and author carry the ID", () => {
+  const [merged] = mod.mergeCandidates(
+    [
+      periscopeRecord(
+        {
+          title: "Through the Periscope: Changing Culture",
+          isbn: "9781438488622",
+        },
+        { libraryCatalog: "Google Books" },
+      ),
+    ],
+    [olRecord({ author: "MARAZZI", isbn: "1438488629" })],
+  );
+  assert.equal(merged.result.openLibraryID, "OL2M");
+  assert.equal(merged.result.libraryCatalog, "Google Books");
+});
+
+test("matching ISBNs do not carry the ID when title or author disagree", () => {
+  for (const incoming of [
+    { title: "Voices of Italian America" },
+    { author: "Laura E. Ruberto" },
+  ]) {
+    const merged = mod.mergeCandidates(
+      [
+        periscopeRecord(
+          { isbn: "9781438488622" },
+          { libraryCatalog: "Crossref" },
+        ),
+      ],
+      [olRecord({ isbn: "1438488629", ...incoming })],
+    );
+    assert.equal(merged.length, 1, "same ISBN, so still merged");
+    assert.equal(merged[0].result.openLibraryID, undefined);
+    assert.equal(merged[0].result.place, "Albany");
+  }
+});
+
+test("different ISBNs never carry the ID", () => {
+  // A wrong ISBN (bad check digit) cannot tie the records, so they merge on
+  // title, surname and year, and the ID stays out.
+  const [merged] = mod.mergeCandidates(
+    [
+      periscopeRecord(
+        { isbn: "9781438488622" },
+        { libraryCatalog: "Crossref" },
+      ),
+    ],
+    [olRecord({ isbn: "9781438488623" })],
+  );
+  assert.equal(merged.result.openLibraryID, undefined);
+  assert.equal(merged.result.place, "Albany");
+  // Two valid, different ISBNs are different editions and stay apart.
+  const apart = mod.mergeCandidates(
+    [
+      periscopeRecord(
+        { isbn: "9781438488622" },
+        { libraryCatalog: "Crossref" },
+      ),
+    ],
+    [olRecord({ isbn: "9781438488608" })],
+  );
+  assert.equal(apart.length, 2);
+  assert.equal(apart[0].result.openLibraryID, undefined);
+  assert.equal(apart[1].result.openLibraryID, "OL2M");
+});
+
+const review = await loadModule("src/modules/enrichmentReview.ts");
+const book = (fields, lastName) => ({
+  id: 2,
+  itemType: "book",
+  getField: (f) => ({ ISBN: "", extra: "", ...fields })[f] ?? "",
+  getCreators: () => [{ creatorTypeID: 1, lastName }],
+});
+const crossrefBook = ({ isbn, year, family = "Marazzi" } = {}) => ({
+  status: "ok",
+  message: {
+    items: [
+      {
+        DOI: "10.1/periscope",
+        URL: "https://doi.org/10.1/periscope",
+        type: "monograph",
+        title: ["Through the Periscope"],
+        author: [{ given: "Martino", family }],
+        publisher: "SUNY Press",
+        ...(isbn ? { ISBN: [isbn] } : {}),
+        ...(year ? { issued: { "date-parts": [[year]] } } : {}),
+      },
+    ],
+  },
+});
+const generalDoc = (n, edition, author = "MARAZZI") => ({
+  key: `/works/OL${n}W`,
+  title: "Through the Periscope",
+  author_name: [author],
+  editions: {
+    docs: [
+      { title: "Through the Periscope", publish_date: ["2022"], ...edition },
+    ],
+  },
+});
+const withPreIsbn = async (run) => {
+  const get = globalThis.Zotero.Prefs.get;
+  globalThis.Zotero.Prefs.get = (key) => key.endsWith(".enrichPreIsbn") || "";
+  try {
+    return await run();
+  } finally {
+    globalThis.Zotero.Prefs.get = get;
+  }
+};
+
+test("a pre-1970 Open Library match without an ISBN keeps its ID, by either search", async () => {
+  const eboli = book(
+    { title: "Cristo si è fermato a Eboli", date: "1945" },
+    "Levi",
+  );
+  const hit = {
+    key: "/works/OL7W",
+    title: "Cristo si è fermato a Eboli",
+    author_name: ["Carlo Levi"],
+    editions: {
+      docs: [
+        {
+          key: "/books/OL7M",
+          title: "Cristo si è fermato a Eboli",
+          publish_date: ["1945"],
+          publisher: ["Einaudi"],
+        },
+      ],
+    },
+  };
+  const edition = (url) =>
+    url.includes("/books/OL7M.json")
+      ? { publishers: ["Einaudi"], publish_places: ["Torino"], works: [] }
+      : null;
+  // Structured search, with a Crossref record (no ISBN either) merged in.
+  recordedBehavior({
+    olStructured: (url) => edition(url) || { numFound: 1, docs: [hit] },
+    crossref: {
+      status: "ok",
+      message: {
+        items: [
+          {
+            DOI: "10.1/eboli",
+            type: "book",
+            title: ["Cristo si è fermato a Eboli"],
+            author: [{ given: "Carlo", family: "Levi" }],
+            issued: { "date-parts": [[1945]] },
+          },
+        ],
+      },
+    },
+    google: { totalItems: 0 },
+  });
+  const structured = await withPreIsbn(() => mod.lookupItem(eboli));
+  assert.equal(structured.openLibraryID, "OL7M");
+  assert.equal(structured.libraryCatalog, "Open Library");
+  assert.equal(structured.place, "Torino", "the edition record was fetched");
+  assert.equal(structured.DOI, "10.1/eboli");
+  assert.equal(structured.ISBN, undefined);
+
+  // Free-text search as the last resort.
+  recordedBehavior({
+    olStructured: (url) => edition(url) || { numFound: 0, docs: [] },
+    crossref: { status: "ok", message: { items: [] } },
+    google: { totalItems: 0 },
+    olGeneral: { docs: [hit] },
+  });
+  const general = await withPreIsbn(() => mod.lookupItem(eboli));
+  assert.equal(general.openLibraryID, "OL7M");
+  assert.equal(general.place, "Torino");
+});
+
+test("a Crossref match keeps an Open Library ID only with ISBN, title and author agreement", async () => {
+  const item = book(
+    { title: "Through the Periscope", date: "1955" },
+    "Marazzi",
+  );
+  const lookup = (author) => {
+    // Crossref has the ISBN but no year, so the free-text search runs and
+    // its record, tied by ISBN-10, supplies the year.
+    recordedBehavior({
+      olStructured: { numFound: 0, docs: [] },
+      crossref: crossrefBook({ isbn: "9781438488622" }),
+      google: { totalItems: 0 },
+      olGeneral: {
+        docs: [
+          generalDoc(
+            2,
+            {
+              key: "/books/OL2M",
+              publish_date: ["1955"],
+              isbn: ["1438488629"],
+              publish_places: ["Albany"],
+            },
+            author,
+          ),
+        ],
+      },
+    });
+    return withPreIsbn(() => mod.lookupItem(item));
+  };
+  const agreed = await lookup("MARAZZI");
+  assert.equal(agreed.libraryCatalog, "Crossref");
+  assert.equal(agreed.openLibraryID, "OL2M");
+  assert.equal(agreed.ISBN, undefined, "pre-1970 ISBN still dropped after");
+  assert.deepEqual(
+    requests.filter((r) => /openlibrary\.org\/books\//.test(r.url)),
+    [],
+    "a Crossref match fetches no Open Library record",
+  );
+
+  const otherAuthor = await lookup("Laura E. Ruberto");
+  assert.equal(otherAuthor.libraryCatalog, "Crossref");
+  assert.equal(otherAuthor.openLibraryID, undefined);
+  const extra = review
+    .proposedChanges(item, otherAuthor)
+    .find((c) => c.field === "extra");
+  assert.doesNotMatch(extra?.after || "", /Open Library ID/);
+});
+
+test("an ID merged on title, surname and year reaches no proposal", async () => {
+  // Crossref has an ISBN but no year. The first free-text record (no edition
+  // key, so no ID) is tied by ISBN and supplies the year; the second, with no
+  // ISBN, then merges on title, surname and year alone.
+  recordedBehavior({
+    olStructured: { numFound: 0, docs: [] },
+    crossref: crossrefBook({ isbn: "9781438488622" }),
+    google: { totalItems: 0 },
+    olGeneral: {
+      docs: [
+        generalDoc(9, { isbn: ["1438488629"] }),
+        generalDoc(2, { key: "/books/OL2M", publisher: ["Other Press"] }),
+      ],
+    },
+  });
+  const item = periscope({ date: "2022", extra: "" });
+  const result = await mod.lookupItem(item);
+  assert.equal(result.libraryCatalog, "Crossref");
+  assert.equal(result.openLibraryID, undefined);
+  assert.equal(result.date, "2022", "merged fields still present");
+  const changes = review.proposedChanges(item, result);
+  assert.ok(changes.length, "the other fields are still proposed");
+  assert.ok(!changes.some((c) => /Open Library ID/.test(c.after)));
+});
