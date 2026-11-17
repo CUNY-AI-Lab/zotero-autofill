@@ -8,7 +8,7 @@ The assistant proposes catalogue metadata for your review. Optional AI helps par
 
 Download an `.xpi` from [Releases](https://github.com/CUNY-AI-Lab/zotero-autofill/releases). In Zotero, open **Tools → Plugins** (or **Add-ons**), select the gear menu, then **Install Add-on From File**. Select the XPI and restart if prompted.
 
-Version 1.1.2 supports Zotero 7 through Zotero 11.0.x; the manifest declares `strict_min_version: 6.999` and `strict_max_version: 11.0.*`. It is tested on Zotero 10.0 and the Zotero 11.0 beta. Zotero 11.1 or later will need a release that raises this bound. Zotero 10 lets you select several collections at once: bibliography import saves into a collection only when exactly one is selected, and otherwise into the selected library's root.
+The plugin supports Zotero 7 through Zotero 11.0.x; the manifest declares `strict_min_version: 6.999` and `strict_max_version: 11.0.*`. It is tested on Zotero 10.0 and the Zotero 11.0 beta. Zotero 11.1 or later will need a release that raises this bound. Zotero 10 lets you select several collections at once: bibliography import saves into a collection only when exactly one is selected, and otherwise into the selected library's root.
 
 ## Review book metadata
 
