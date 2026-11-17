@@ -360,6 +360,97 @@ test("ISBN lookup resolves an Open Library author reference", async () => {
   assert.match(urls[1], /openlibrary\.org\/authors\/OL2630029A\.json$/);
 });
 
+/** An ISBN lookup for Matilda; `work` answers the work request. */
+async function isbnLookupWithWork(edition, work) {
+  const urls = [];
+  const sleep = mod.enrichRuntime.sleep;
+  mod.enrichRuntime.sleep = async () => {};
+  globalThis.Zotero.HTTP = {
+    request: async (method, url) => {
+      urls.push(url);
+      if (url.includes("/works/")) {
+        if (work instanceof Error) throw work;
+        return { response: work };
+      }
+      return {
+        response: {
+          isbn_13: ["9780140328721"],
+          title: "Matilda",
+          works: [{ key: "/works/OL45804W" }],
+          ...edition,
+        },
+      };
+    },
+  };
+  const proposal = await mod
+    .lookupItem({
+      itemType: "book",
+      getField: (f) =>
+        ({ ISBN: "9780140328721", title: "Matilda", date: "1988" })[f] || "",
+      getCreators: () => [],
+    })
+    .finally(() => {
+      mod.enrichRuntime.sleep = sleep;
+    });
+  return { proposal, urls };
+}
+
+test("ISBN lookup takes the description from the work when the edition has none", async () => {
+  const { proposal, urls } = await isbnLookupWithWork(
+    {},
+    {
+      description: {
+        type: "/type/text",
+        value: "  Matilda is a little girl who is far too good to be true.  ",
+      },
+    },
+  );
+  assert.equal(
+    proposal.abstractNote,
+    "Matilda is a little girl who is far too good to be true.",
+  );
+  assert.equal(urls.length, 2);
+  assert.match(urls[1], /openlibrary\.org\/works\/OL45804W\.json$/);
+
+  const long = await isbnLookupWithWork({}, { description: "x".repeat(600) });
+  assert.equal(long.proposal.abstractNote.length, 500);
+  assert.ok(long.proposal.abstractNote.endsWith("..."));
+});
+
+test("ISBN lookup keeps the edition's own description and does not fetch the work", async () => {
+  const { proposal, urls } = await isbnLookupWithWork(
+    { description: "The edition's blurb." },
+    { description: "The work's description." },
+  );
+  assert.equal(proposal.abstractNote, "The edition's blurb.");
+  assert.equal(urls.length, 1);
+});
+
+test("ISBN lookup still succeeds without an abstract when the work has none or fails", async () => {
+  for (const work of [
+    {},
+    { description: "   " },
+    Object.assign(new Error("HTTP 503"), { status: 503 }),
+  ]) {
+    const { proposal, urls } = await isbnLookupWithWork(
+      { publishers: ["Puffin"] },
+      work,
+    );
+    assert.equal(proposal.publisher, "Puffin");
+    assert.equal(proposal.abstractNote, undefined);
+    assert.equal(urls.length, 2);
+  }
+});
+
+test("ISBN lookup does not request a work with a malformed key", async () => {
+  const { proposal, urls } = await isbnLookupWithWork(
+    { works: [{ key: "/works/../admin" }] },
+    { description: "should not be fetched" },
+  );
+  assert.equal(proposal.abstractNote, undefined);
+  assert.equal(urls.length, 1);
+});
+
 test("manual enrichment closes progress before opening and focusing review", async () => {
   const events = [];
   globalThis.addon = {
