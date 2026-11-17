@@ -76,7 +76,6 @@ test("catalog rows keep text-generation only, recommended first, then by order",
       "deepseek-v4.1-flash-1017",
       "glm-5.3",
       "gpt-oss-120b",
-      "deepseek-v4-pro-0813",
       "glm-4.7",
       "qwen3-vl-235b-a22b-instruct",
     ],
@@ -119,8 +118,8 @@ test("catalog IDs are sent as-is and legacy values still resolve", async () => {
   await llm.callOpenRouter([]);
   assert.equal(sentModel(), "glm-5.3");
   for (const [saved, id] of [
-    ["deepseek/deepseek-v4-pro", "deepseek-v4-pro-0813"],
-    ["deepseek-v4-pro", "deepseek-v4-pro-0813"],
+    ["deepseek/deepseek-v4-pro", "deepseek-v4.1-flash-1017"],
+    ["deepseek-v4-pro", "deepseek-v4.1-flash-1017"],
     ["deepseek/deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"],
   ]) {
     reset(saved);
@@ -142,6 +141,15 @@ test("a saved model that left the catalog migrates to the default with one notic
   assert.equal(notices.length, 1);
 });
 
+test("a saved DeepSeek V4 Pro 0813 choice migrates once Workers AI retires it", async () => {
+  reset("deepseek-v4-pro-0813");
+  await llm.callOpenRouter([]);
+  assert.equal(prefs.llmModel, "deepseek-v4.1-flash-1017");
+  assert.equal(sentModel(), "deepseek-v4.1-flash-1017");
+  assert.equal(notices.length, 1);
+  assert.match(notices[0], /deepseek-v4-pro-0813.*no longer offered/);
+});
+
 test("when the catalog cannot be fetched the built-in models still work and nothing migrates", async () => {
   reset("glm-5.3");
   catalogFails = true;
@@ -149,9 +157,9 @@ test("when the catalog cannot be fetched the built-in models still work and noth
   assert.equal(prefs.llmModel, "glm-5.3");
   assert.deepEqual(
     catalog.getCatalogModels().map((m) => m.id),
-    ["deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"],
+    ["deepseek-v4.1-flash-1017", "glm-5.3"],
   );
-  assert.equal(sentModel(), "deepseek-v4.1-flash-1017");
+  assert.equal(sentModel(), "glm-5.3");
   // A failed fetch is not retried on every call.
   await llm.callOpenRouter([]);
   assert.equal(calls.filter((c) => c.method === "GET").length, 1);

@@ -42,16 +42,6 @@
       ]
     },
     {
-      "id": "deepseek-v4-pro-0813",
-      "name": "DeepSeek V4 Pro 0813",
-      "order": 10,
-      "recommended": false,
-      "tier": "advanced",
-      "status": "active",
-      "modality": "text",
-      "capabilities": ["text-generation", "function-calling", "reasoning"]
-    },
-    {
       "id": "flux-1-schnell",
       "name": "FLUX.1 [schnell]",
       "order": 12,

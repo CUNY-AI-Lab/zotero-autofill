@@ -68,7 +68,7 @@ test("model IDs follow the selected provider for both models and saved ID format
       openrouterKey = "test-key";
       const cailIds = {
         "deepseek-v4.1-flash": "deepseek-v4.1-flash-1017",
-        "deepseek-v4-pro": "deepseek-v4-pro-0813",
+        "deepseek-v4-pro": "deepseek-v4.1-flash-1017",
       };
       for (const slug of ["deepseek-v4.1-flash", "deepseek-v4-pro"]) {
         // Menu value, and the unprefixed legacy value that getConfiguredModel coerces.
@@ -96,10 +96,7 @@ test("every CAIL model ID the plugin can send is in the checked-in catalog fixtu
     await readFile("tests/fixtures/cail-catalog-ids.json", "utf8"),
   );
   const sendable = Object.values(llm.PROVIDER_MODEL_IDS).map((ids) => ids.cail);
-  assert.deepEqual(sendable.sort(), [
-    "deepseek-v4-pro-0813",
-    "deepseek-v4.1-flash-1017",
-  ]);
+  assert.deepEqual([...new Set(sendable)], ["deepseek-v4.1-flash-1017"]);
   for (const id of sendable) assert.ok(catalog.includes(id), `${id} missing`);
   for (const model of llm.OPEN_WEIGHT_MODELS)
     assert.ok(catalog.includes(llm.getProviderModelId(model, "cail")));

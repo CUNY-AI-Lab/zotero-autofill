@@ -3,7 +3,7 @@
  *
  * `GET /v1/catalog` is public (no key). We fetch it with a 30 s timeout, keep it
  * in memory for the session, persist it with a timestamp, and refresh at most
- * once a day. The two built-in DeepSeek models are the offline fallback.
+ * once a day. Two built-in models are the offline fallback.
  */
 
 import { getPref, setPref } from "../utils/prefs";
@@ -26,7 +26,11 @@ export const CATALOG_TIMEOUT_MS = 30000;
 export const CATALOG_REFRESH_MS = 24 * 60 * 60 * 1000;
 const RETRY_AFTER_FAILURE_MS = 5 * 60 * 1000;
 
-/** Offline fallback: the two models the plugin has always offered. */
+/**
+ * Offline fallback: the Gateway's two top recommendations. DeepSeek V4 Pro
+ * (`deepseek-v4-pro-0813`) left this list when Workers AI retired it on
+ * November 20, 2026.
+ */
 export const FALLBACK_CAIL_MODELS: CatalogModel[] = [
   {
     id: "deepseek-v4.1-flash-1017",
@@ -36,10 +40,10 @@ export const FALLBACK_CAIL_MODELS: CatalogModel[] = [
     reasoning: true,
   },
   {
-    id: "deepseek-v4-pro-0813",
-    name: "DeepSeek V4 Pro",
-    order: 10,
-    recommended: false,
+    id: "glm-5.3",
+    name: "GLM 5.3",
+    order: 2,
+    recommended: true,
     reasoning: true,
   },
 ];
@@ -102,7 +106,7 @@ export function getCatalogModels(): CatalogModel[] {
 
 /**
  * Models for the settings menu: the Gateway's recommended text models, the
- * two DeepSeek models the plugin has always offered, and the saved model.
+ * two built-in fallback models, and the saved model.
  * The full catalog also lists classifiers, tiny LoRA demos and audio models
  * that cannot parse a bibliography, so they are left out unless saved.
  */

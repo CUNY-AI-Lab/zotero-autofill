@@ -147,13 +147,12 @@ describe("settings pane in real Zotero", function () {
       Array.from(menu.menupopup.children as ArrayLike<any>).map((m) =>
         m.getAttribute("value"),
       );
-    // Recommended text models plus the built-in DeepSeek pair, in catalog
+    // Recommended text models plus the built-in fallback pair, in catalog
     // order; image models and unrecommended extras are left out.
     assert.deepEqual(values(), [
       "deepseek-v4.1-flash-1017",
       "glm-5.3",
       "gpt-oss-120b",
-      "deepseek-v4-pro-0813",
     ]);
     assert.equal(menu.value, "deepseek-v4.1-flash-1017");
     menu.value = "glm-5.3";

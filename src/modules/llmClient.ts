@@ -271,7 +271,9 @@ export const DEFAULT_LLM_MODEL = OPEN_WEIGHT_MODELS[0];
 /**
  * Stored preference values (the keys) are provider-neutral; each provider has
  * its own canonical ID. The Gateway has no aliases, so these must match its
- * catalog exactly (see tests/fixtures/cail-catalog-ids.json).
+ * catalog exactly (see tests/fixtures/cail-catalog-ids.json). Workers AI
+ * retired `deepseek-v4-pro-0813` on November 20, 2026, so on the Gateway a
+ * saved V4 Pro choice resolves to V4.1 Flash, as saved V4 Flash choices do.
  */
 export const PROVIDER_MODEL_IDS: Record<
   (typeof OPEN_WEIGHT_MODELS)[number],
@@ -283,7 +285,7 @@ export const PROVIDER_MODEL_IDS: Record<
   },
   "deepseek/deepseek-v4-pro": {
     openrouter: "deepseek/deepseek-v4-pro",
-    cail: "deepseek-v4-pro-0813",
+    cail: "deepseek-v4.1-flash-1017",
   },
 };
 

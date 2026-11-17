@@ -80,10 +80,10 @@ Remove the selected provider’s key to stop AI requests and continue using cata
 
 The Gateway menu lists the models the Gateway recommends in its live catalog. The OpenRouter menu is read from OpenRouter’s public model list (refreshed at most daily) and limited to downloadable-weight models: the three newest models in each of the DeepSeek, Qwen, Kimi, GLM, gpt-oss, Llama, Mistral, and Gemma families that have a Hugging Face ID, accept JSON responses, and take at least 32k tokens of context. Each entry shows its input price. If the list cannot be loaded, the two DeepSeek models below remain available. A custom endpoint uses whatever model you name; that choice, and its data policy, are yours.
 
-CAIL Gateway requests use prefix-free IDs (`deepseek-v4.1-flash` and `deepseek-v4-pro`); OpenRouter requests retain the `deepseek/` prefix. Saved V4 Flash selections resolve to V4.1 Flash.
+CAIL Gateway requests use the Gateway’s catalog IDs, such as `deepseek-v4.1-flash-1017`; OpenRouter requests retain the `deepseek/` prefix. Saved V4 Flash selections resolve to V4.1 Flash. The Gateway no longer offers DeepSeek V4 Pro, which Cloudflare Workers AI retired on November 20, 2026, so with the Gateway a saved V4 Pro selection also resolves to V4.1 Flash. If the Gateway catalog cannot be loaded, its menu falls back to DeepSeek V4.1 Flash and GLM 5.3.
 
 - **DeepSeek V4.1 Flash** (`deepseek/deepseek-v4.1-flash`) is the lower-cost default.
-- **DeepSeek V4 Pro** (`deepseek/deepseek-v4-pro`) is the higher-quality alternative.
+- **DeepSeek V4 Pro** (`deepseek/deepseek-v4-pro`) is the higher-quality alternative on OpenRouter.
 
 The IDs and OpenRouter availability were checked on September 7, 2026. Both support the JSON responses required by the plugin. OpenRouter prices and availability can change, so check its model page before a large import. Any older saved model preference automatically falls back to DeepSeek V4.1 Flash.
 
