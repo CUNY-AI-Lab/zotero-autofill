@@ -1,6 +1,6 @@
 /**
  * Enrichment module for Zotero Metadata Assistant
- * Searches Open Library, Google Books, and Crossref to fill missing metadata
+ * Searches Open Library, Google Books, Crossref, and DataCite to fill missing metadata
  * Includes LLM-enhanced features: fuzzy matching fallback and disambiguation
  */
 
@@ -766,6 +766,104 @@ function parseCrossrefWork(work: any): EnrichmentResult {
   ) as EnrichmentResult;
 }
 
+function parseDataCiteWork(attributes: any): EnrichmentResult {
+  const authors = Array.isArray(attributes?.creators)
+    ? attributes.creators
+        .map((creator: any): EnrichmentAuthor => {
+          const parsed: EnrichmentAuthor = {};
+          if (typeof creator?.givenName === "string")
+            parsed.given = creator.givenName;
+          if (typeof creator?.familyName === "string")
+            parsed.family = creator.familyName;
+          if (!parsed.given && !parsed.family) {
+            const name = typeof creator?.name === "string" ? creator.name : "";
+            // DataCite writes a person as "Family, Given".
+            const [family, given] = name.split(/,\s*/);
+            if (creator?.nameType !== "Organizational" && family && given) {
+              parsed.family = family;
+              parsed.given = given;
+            } else if (name) parsed.name = name;
+          }
+          return parsed;
+        })
+        .filter((author: EnrichmentAuthor) => Boolean(authorLabel(author)))
+    : [];
+  const doi = typeof attributes?.doi === "string" ? attributes.doi : undefined;
+  const title = Array.isArray(attributes?.titles)
+    ? attributes.titles.find((t: any) => !t?.titleType)?.title
+    : undefined;
+  const abstract = Array.isArray(attributes?.descriptions)
+    ? attributes.descriptions.find(
+        (d: any) => d?.descriptionType === "Abstract",
+      )?.description
+    : undefined;
+  const year = Number(attributes?.publicationYear);
+  const result: EnrichmentResult = {
+    title: typeof title === "string" && title.trim() ? title.trim() : undefined,
+    source: doi ? `https://doi.org/${doi}` : undefined,
+    libraryCatalog: "DataCite",
+    author: authorLabel(authors[0]),
+    authors,
+    DOI: doi,
+    publisher:
+      typeof attributes?.publisher === "string"
+        ? attributes.publisher
+        : undefined,
+    date: Number.isInteger(year) && year > 0 ? String(year) : undefined,
+    abstractNote: cleanAbstract(abstract),
+  };
+  return Object.fromEntries(
+    Object.entries(result).filter(([, value]) => value !== undefined),
+  ) as EnrichmentResult;
+}
+
+/**
+ * DataCite registers the DOIs Crossref does not: arXiv preprints, Zenodo and
+ * most other repository deposits.
+ */
+async function fetchDataCiteWork(
+  doi: string,
+): Promise<EnrichmentResult | null> {
+  const url = `https://api.datacite.org/dois/${encodeURIComponent(doi)}`;
+  let response: any;
+  try {
+    response = await lookupRequest(url);
+  } catch (error) {
+    ztoolkit.log(`DataCite DOI lookup error for ${doi}: ${error}`);
+    if (isNotFound(error)) return null;
+    throw new LookupFailedError([
+      { name: "DataCite", found: 0, error: describeSourceFailure(error) },
+    ]);
+  }
+  const result = parseDataCiteWork(
+    (response.response as any)?.data?.attributes,
+  );
+  if (!result.DOI || !result.title) return null;
+  // DataCite lowercases DOIs; keep the registrant's spelling (10.48550/arXiv.…).
+  if (result.DOI.toLowerCase() === doi.toLowerCase()) {
+    result.DOI = doi;
+    result.source = `https://doi.org/${doi}`;
+  }
+  return result;
+}
+
+const ARXIV_ID = String.raw`(\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z]{2})?\/\d{7})`;
+const ARXIV_LABELLED = new RegExp(String.raw`arxiv:\s*${ARXIV_ID}`, "i");
+const ARXIV_URL = new RegExp(
+  String.raw`arxiv\.org\/(?:abs|pdf)\/${ARXIV_ID}`,
+  "i",
+);
+
+/** The DOI arXiv registers for every paper, from the item's arXiv ID. */
+function arxivDOI(item: Zotero.Item): string | null {
+  const field = (name: string) => String(item.getField(name as any) || "");
+  const id =
+    field("archiveID").match(ARXIV_LABELLED)?.[1] ||
+    field("extra").match(ARXIV_LABELLED)?.[1] ||
+    field("url").match(ARXIV_URL)?.[1];
+  return id ? `10.48550/arXiv.${id}` : null;
+}
+
 async function fetchCrossrefWork(
   doi: string,
 ): Promise<EnrichmentResult | null> {
@@ -780,7 +878,7 @@ async function fetchCrossrefWork(
     response = await lookupRequest(url);
   } catch (error) {
     ztoolkit.log(`Crossref DOI lookup error for ${normalized}: ${error}`);
-    if (isNotFound(error)) return null;
+    if (isNotFound(error)) return fetchDataCiteWork(normalized);
     throw new LookupFailedError([
       { name: "Crossref", found: 0, error: describeSourceFailure(error) },
     ]);
@@ -1236,6 +1334,12 @@ export async function lookupItem(
   if (item.itemType !== "book") {
     const existingDOI = String(item.getField("DOI") || "").trim();
     if (existingDOI) return fetchCrossrefWork(existingDOI);
+    if (item.itemType === "preprint") {
+      // An arXiv paper has a DataCite DOI even when the item lacks one.
+      const doi = arxivDOI(item);
+      const result = doi ? await fetchDataCiteWork(doi) : null;
+      if (result) return result;
+    }
     const title = String(item.getField("title") || "");
     if (!title) return null;
     const author = getFirstAuthor(item);

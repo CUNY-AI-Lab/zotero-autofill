@@ -520,3 +520,145 @@ test("manual enrichment closes progress before opening and focusing review", asy
     "dialog:focus",
   ]);
 });
+
+const notFound = () => Object.assign(new Error("HTTP 404"), { status: 404 });
+const dataciteArxiv = {
+  response: {
+    data: {
+      attributes: {
+        doi: "10.48550/arxiv.1706.03762",
+        titles: [{ title: "Attention Is All You Need" }],
+        creators: [
+          {
+            name: "Vaswani, Ashish",
+            nameType: "Personal",
+            givenName: "Ashish",
+            familyName: "Vaswani",
+          },
+          { name: "Google Brain", nameType: "Organizational" },
+        ],
+        publisher: "arXiv",
+        publicationYear: 2017,
+        descriptions: [
+          { descriptionType: "Other", description: "15 pages, 5 figures" },
+          {
+            descriptionType: "Abstract",
+            description: "The dominant sequence transduction models.",
+          },
+        ],
+      },
+    },
+  },
+};
+function preprint(fields) {
+  return {
+    itemType: "preprint",
+    getField: (field) => fields[field] || "",
+    getCreators: () => [],
+  };
+}
+
+test("a preprint DOI that Crossref does not hold is read from DataCite", async () => {
+  const urls = [];
+  globalThis.Zotero.HTTP = {
+    request: async (method, url) => {
+      urls.push(url);
+      if (url.includes("api.crossref.org")) throw notFound();
+      if (url.includes("api.datacite.org")) return dataciteArxiv;
+      throw new Error(`unexpected request ${url}`);
+    },
+  };
+  const proposal = await mod.lookupItem(
+    preprint({ DOI: "10.48550/arXiv.1706.03762", title: "Attention" }),
+  );
+  assert.equal(proposal.title, "Attention Is All You Need");
+  assert.equal(proposal.DOI, "10.48550/arXiv.1706.03762");
+  assert.equal(proposal.publisher, "arXiv");
+  assert.equal(proposal.date, "2017");
+  assert.equal(proposal.libraryCatalog, "DataCite");
+  assert.equal(proposal.source, "https://doi.org/10.48550/arXiv.1706.03762");
+  assert.equal(
+    proposal.abstractNote,
+    "The dominant sequence transduction models.",
+  );
+  assert.deepEqual(proposal.authors, [
+    { given: "Ashish", family: "Vaswani" },
+    { name: "Google Brain" },
+  ]);
+  assert.match(urls[0], /api\.crossref\.org\/works\/10\.48550/);
+  assert.match(urls[1], /api\.datacite\.org\/dois\/10\.48550%2FarXiv/);
+  assert.equal(urls.length, 2);
+});
+
+test("a DOI held by neither Crossref nor DataCite is not found", async () => {
+  globalThis.Zotero.HTTP = {
+    request: async () => {
+      throw notFound();
+    },
+  };
+  assert.equal(
+    await mod.lookupItem(preprint({ DOI: "10.9999/nowhere", title: "X" })),
+    null,
+  );
+});
+
+test("a DataCite failure is reported, not counted as not found", async () => {
+  globalThis.Zotero.HTTP = {
+    request: async (method, url) => {
+      if (url.includes("api.crossref.org")) throw notFound();
+      throw Object.assign(new Error("HTTP 503"), { status: 503 });
+    },
+  };
+  await assert.rejects(
+    mod.lookupItem(preprint({ DOI: "10.48550/arXiv.1706.03762" })),
+    (error) =>
+      error.name === "LookupFailedError" &&
+      error.sources[0].name === "DataCite",
+  );
+});
+
+for (const [label, fields] of [
+  ["Archive ID", { archiveID: "arXiv:1706.03762v5" }],
+  ["URL", { url: "https://arxiv.org/abs/1706.03762" }],
+  ["Extra", { extra: "tex.ids: x\narXiv: 1706.03762 [cs]" }],
+  ["old-style Archive ID", { archiveID: "arXiv:hep-th/9901001" }],
+]) {
+  test(`a preprint without a DOI is looked up by the arXiv ID in ${label}`, async () => {
+    const urls = [];
+    globalThis.Zotero.HTTP = {
+      request: async (method, url) => {
+        urls.push(url);
+        return dataciteArxiv;
+      },
+    };
+    const proposal = await mod.lookupItem(
+      preprint({ title: "Attention Is All You Need", ...fields }),
+    );
+    assert.equal(proposal.title, "Attention Is All You Need");
+    assert.equal(urls.length, 1);
+    assert.match(
+      urls[0],
+      label.startsWith("old")
+        ? /api\.datacite\.org\/dois\/10\.48550%2FarXiv\.hep-th%2F9901001$/
+        : /api\.datacite\.org\/dois\/10\.48550%2FarXiv\.1706\.03762$/,
+    );
+  });
+}
+
+test("an arXiv ID DataCite does not hold falls back to the title search", async () => {
+  const urls = [];
+  globalThis.Zotero.HTTP = {
+    request: async (method, url) => {
+      urls.push(url);
+      if (url.includes("api.datacite.org")) throw notFound();
+      return { response: { message: { items: [] } } };
+    },
+  };
+  assert.equal(
+    await mod.lookupItem(
+      preprint({ title: "Some Paper", archiveID: "arXiv:2401.00001" }),
+    ),
+    null,
+  );
+  assert.match(urls[1], /api\.crossref\.org\/works\?/);
+});
