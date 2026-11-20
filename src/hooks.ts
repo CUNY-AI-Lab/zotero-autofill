@@ -3,7 +3,7 @@ import { EnrichmentFactory, isEnrichableItem } from "./modules/enrichment";
 import { BibliographyImportFactory } from "./modules/bibliographyImport";
 import { getString, initLocale } from "./utils/locale";
 import { registerPrefsScripts } from "./modules/preferenceScript";
-import { createZToolkit } from "./utils/ztoolkit";
+import { MenuManager } from "zotero-plugin-toolkit";
 import { migrateKeysFromPrefs } from "./utils/keystore";
 import {
   createAutoEnrichLimiter,
@@ -11,6 +11,10 @@ import {
 } from "./modules/autoEnrichLimit";
 
 const autoEnrichLimiter = createAutoEnrichLimiter();
+
+// Menu entries are owned per main window, so closing one window removes only
+// its own entries. The global ztoolkit lives for the whole add-on session.
+const windowMenus = new Map<Window, MenuManager>();
 
 async function onStartup() {
   await Promise.all([
@@ -40,25 +44,31 @@ async function onStartup() {
 }
 
 async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
-  addon.data.ztoolkit = createZToolkit();
-
   win.MozXULElement.insertFTLIfNeeded(
     `${addon.data.config.addonRef}-mainWindow.ftl`,
   );
 
+  // Startup and bootstrap can both load the same window; register it once.
+  if (windowMenus.has(win)) return;
+  const menus = new MenuManager(ztoolkit);
+  windowMenus.set(win, menus);
+
   // Register right-click context menu
-  registerContextMenu();
+  registerContextMenu(win, menus);
 
   // Register Tools menu item
-  registerToolsMenu();
+  registerToolsMenu(win, menus);
 }
 
-async function onMainWindowUnload(_win: Window): Promise<void> {
-  ztoolkit.unregisterAll();
+async function onMainWindowUnload(win: Window): Promise<void> {
+  windowMenus.get(win)?.unregisterAll();
+  windowMenus.delete(win);
 }
 
 function onShutdown(): void {
   unregisterNotifier();
+  for (const menus of windowMenus.values()) menus.unregisterAll();
+  windowMenus.clear();
   ztoolkit.unregisterAll();
   addon.data.alive = false;
   // @ts-expect-error - Plugin instance is not typed
@@ -126,9 +136,13 @@ function unregisterNotifier() {
   }
 }
 
-function registerContextMenu() {
+function menuPopup(win: Window, selector: string) {
+  return win.document.querySelector(selector) as XUL.MenuPopup;
+}
+
+function registerContextMenu(win: Window, menus: MenuManager) {
   // Right-click menu on items: "Enrich Metadata from Online Sources"
-  ztoolkit.Menu.register("item", {
+  menus.register(menuPopup(win, "#zotero-itemmenu"), {
     tag: "menuitem",
     label: getString("menu-enrich-metadata"),
     commandListener: () => {
@@ -146,8 +160,9 @@ function registerContextMenu() {
   });
 }
 
-function registerToolsMenu() {
-  ztoolkit.Menu.register("menuTools", {
+function registerToolsMenu(win: Window, menus: MenuManager) {
+  const toolsPopup = menuPopup(win, "#menu_ToolsPopup");
+  menus.register(toolsPopup, {
     tag: "menuitem",
     label: "Undo Metadata Changes…",
     commandListener: () => {
@@ -155,7 +170,7 @@ function registerToolsMenu() {
     },
   });
   // Tools menu: "Import Bibliography Text..."
-  ztoolkit.Menu.register("menuTools", {
+  menus.register(toolsPopup, {
     tag: "menuitem",
     label: getString("menu-import-bibliography"),
     commandListener: () => {
